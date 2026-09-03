@@ -4,8 +4,8 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 import os
 
-CMD_FILE = "/app_bridge/cmd.txt"
-
+# 1. 경로 통일 (App Lab main.py의 CMD 경로와 완전히 동일하게 설정)
+CMD_FILE = "/app/python/cmd.txt"  # Docker 볼륨 경로 확인 필요
 NEUTRAL = 1487
 DEADBAND = 35
 MAX_DELTA = 400
@@ -28,8 +28,13 @@ class ThrusterDriver(Node):
         left_raw = linear - angular
         right_raw = linear + angular
 
-        left_pwm = self.calc_pwm(left_raw)
-        right_pwm = self.calc_pwm(right_raw)
+        # 2. 차동 구동 믹싱 값 노멀라이즈 (-1.0 ~ 1.0 제한)
+        max_val = max(abs(left_raw), abs(right_raw), 1.0)
+        left_norm = left_raw / max_val
+        right_norm = right_raw / max_val
+
+        left_pwm = self.calc_pwm(left_norm)
+        right_pwm = self.calc_pwm(right_norm)
 
         try:
             tmp = CMD_FILE + ".tmp"
@@ -60,10 +65,13 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # 안전한 종료 처리 (중립값 전송)
         try:
-            with open(CMD_FILE, 'w') as f:
+            tmp = CMD_FILE + ".tmp"
+            with open(tmp, 'w') as f:
                 f.write(f"{NEUTRAL},{NEUTRAL}\n")
-        except:
+            os.replace(tmp, CMD_FILE)
+        except Exception:
             pass
         node.destroy_node()
         rclpy.shutdown()
