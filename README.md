@@ -1,315 +1,264 @@
-# 🚤 6can_usv_project — 협업 템플릿
+# 🚤 수질 연동 분수 펌프 · RGB LED 자동 제어
 
-이 저장소는 아래 **"0. 시스템 요구사항"**에 맞춘 기본 뼈대(scaffolding)입니다. ROS 2 토픽 이름, 메시지 타입, 노드 구조, launch 파일은 이미 요구사항과 일치하도록 맞춰져 있습니다.
+B2 보드(`usv_actuators`)가 B1의 수질 측정값을 직접 구독해서, 분수 펌프와 RGB LED를
+**사람 개입 없이** 제어한다. 물이 나빠지면 펌프를 돌려 물을 순환시키고, LED 색으로
+현재 수질 단계를 밖에서 바로 알아볼 수 있게 한다.
 
-- 토픽 인터페이스(이름/타입)만 준수한다면 **내부 클래스 구조, 파일 분할, 알고리즘 구현은 담당자가 자유롭게 재구성**해도 괜찮습니다.
-- 자리표시자는 전부 코드에 `TODO(B1 담당자):`, `TODO(B2 담당자):`, `TODO(GCS 담당자):` 주석으로 표시되어 있습니다.
-- **아래 문자열을 그대로 복사해서 검색하세요** — "담당자" 자리에 본인 파트 이름을 넣지 마세요. 태그 자체가 고정된 문자열입니다.
-
-```bash
-# 전체 TODO 찾기
-grep -rn "TODO(" usv_ws/src
-
-# 담당자별로 찾기
-grep -rn "TODO(B1 담당자):" usv_ws/src
-grep -rn "TODO(B2 담당자):" usv_ws/src
-grep -rn "TODO(GCS 담당자):" usv_ws/src
-```
+기존에는 GCS에서 사람이 버튼을 눌러야만 펌프·LED가 움직였다. 이제는 자동이 기본이고,
+사람이 누르면 그때만 사람 쪽이 우선한다.
 
 ---
 
-## ⚙️ 0. 시스템 요구사항
+## 1. 동작 규칙
 
-- **ROS 2 버전**: ROS 2 Jazzy Jalisco
-  - 세 보드 모두 같은 `ROS_DOMAIN_ID` 사용 (Wi-Fi 기반 DDS 통신 — 도메인 ID가 다르면 서로 안 보임)
-- **하드웨어 구성**
-  - 지상 관제소(GCS): Raspberry Pi
-  - 수상정(USV) 본체: Arduino UNO Q 2대 (B1, B2)
-- **Docker 필수 조건**
-  - **Arduino UNO Q에서 도는 모든 ROS 2 노드(B1, B2)는 Docker 컨테이너 환경에서 빌드·실행**
-  - `--privileged`, `-v /dev:/dev` 등 디바이스 마운트 적용
-  - GCS(Raspberry Pi)는 이 조건 대상 아님
-- **이번 범위에서 제외한 것**
-  - Failsafe 감시 노드(`watchdog_node`)와 heartbeat 패키지는 개발 범위에서 완전히 제외
-  - 추진기 드라이버는 `/cmd_vel_safe`가 아니라 **`/cmd_vel`을 직접 구독**
-- **GPS 진단 토픽 처리 규칙**
-  - `gps_driver_node`의 `/gps/satellites`, `/gps/status` 발행 로직은 코드 안에 유지
-  - GCS GUI는 이 두 토픽을 구독하지 않음
-- **Arduino 스케치(`.ino`) 필요 여부**
-  - Arduino UNO Q는 MCU(STM32)와 Linux가 분리되어 있어, UART·아날로그 핀처럼 물리적으로 MCU에 연결된 장치는 `Arduino_RouterBridge`를 거쳐야만 ROS 쪽에서 값을 받을 수 있음
-  - **필요함**: `water_quality_node`, `gps_driver_node` → `usv_sensors/sketch/sketch.ino`에 이미 포함
-  - **불필요함**: `camera_node`(USB 카메라, Linux에서 직접 처리), `usv_gcs`의 모든 노드(Raspberry Pi는 MCU/Bridge 구조 자체가 없음)
-  - **미정**: `thruster_driver_node`, `actuator_driver_node`(B2) — 모터 드라이버가 MCU 핀에 직접 물리면 `.ino` 필요, I2C/USB 장치라면 순수 파이썬으로도 가능 (하드웨어 미확정, 4항 B2 체크리스트 참고)
+### 3단계 판정
+
+`/water_quality/data`의 `clarity_pct`(0~100, 클수록 깨끗)를 세 단계로 나눈다.
+
+| 단계 | 조건 | LED | 분수 펌프 |
+|---|---|---|---|
+| `GOOD` (좋음) | `clarity_pct >= 60` | 🟢 초록 | OFF |
+| `NORMAL` (보통) | `40 <= clarity_pct < 60` | 🟡 노랑 | OFF |
+| `BAD` (나쁨) | `clarity_pct < 40` | 🔴 빨강 | **ON** |
+
+B1 스케치가 이미 계산해주는 `clarity_level`(5단계 문자열) 대신 `clarity_pct` 숫자를
+쓴다. 문자열을 쓰면 임계값을 조정할 때마다 B1 담당자의 스케치를 고쳐 MCU에 다시
+업로드해야 하지만, 숫자를 받아 이쪽에서 판정하면 launch 인자만 바꾸면 된다.
+
+### 히스테리시스 — 펌프가 딸깍거리지 않게
+
+경계에서 측정값이 `39.8 ↔ 40.2`로 미세하게 흔들리면 릴레이가 1초마다 on/off를
+반복한다. 그래서 한 번 어떤 단계에 들어가면 경계를 `margin`(기본 3.0)만큼 확실히
+넘어야 빠져나온다.
+
+- `BAD`에서 나오려면 `clarity_pct >= 43`
+- `GOOD`에서 떨어지려면 `clarity_pct < 57`
+
+### 사람이 버튼을 누르면
+
+GCS에서 수동 명령(`/actuator/pump_cmd`, `/actuator/led_cmd`)이 오면 그 값을 즉시
+적용하고, `pump_manual_hold_s` / `led_manual_hold_s`(기본 60초) 동안 자동 판정을
+억제한다. 시간이 지나면 자동이 다시 판단한다.
+
+"단계가 바뀔 때만 자동이 개입"하는 방식은 쓰지 않았다. 물이 계속 나쁜 상태로
+머무르면 단계 변화가 없어서, 사람이 끄고 잊어버린 펌프가 영영 안 켜지기 때문이다.
+
+펌프와 LED의 억제 타이머는 서로 독립이다. LED 색만 바꿔놓고 펌프는 자동에 맡기는
+조작이 가능하다.
+
+### 수질 데이터가 끊기면
+
+1초 주기 타이머가 마지막 수신 시각을 확인해서, `stale_timeout_s`(기본 5초) 이상
+`/water_quality/data`가 끊기면 펌프를 끈다. B1이 죽거나 Wi-Fi가 끊겼는데 펌프가
+켜진 채 방치되면 배터리만 축나기 때문이다.
+
+단, 수동 억제 중에는 건드리지 않는다. 사람이 방금 켠 펌프를 두절 감지가 꺼버리면
+안 된다.
 
 ---
 
-## 🗺️ 1. 아키텍처 한눈에 보기
-
-| 보드 | 패키지 | 담당 | 실행 환경 |
-|---|---|---|---|
-| B1 (Arduino UNO Q) | `usv_sensors` | 수질 · GPS · 카메라 | Docker 필수 |
-| B2 (Arduino UNO Q) | `usv_actuators` | 추진기 · 펌프 · LED | Docker 필수 |
-| GCS (Raspberry Pi) | `usv_gcs` | GUI · 조종 | 네이티브 (Docker 불필요) |
-
-```
-usv_ws/src/
-├── usv_sensors/     # B1 — water_quality_node, gps_driver_node, camera_node
-├── usv_actuators/   # B2 — thruster_driver_node, actuator_driver_node
-└── usv_gcs/         # GCS — gui_main_node, joy_to_cmd_node
-```
-
-### 인터페이스 계약
-
-아래 표가 이 프로젝트의 **인터페이스 계약**입니다.
-
-- 토픽 이름/메시지 타입을 바꿔야 한다면 **이 표부터 고치고 팀 전체에 공유한 뒤** 코드를 맞추세요.
-- 순서를 거꾸로 하면 안 됩니다 — 누군가 코드만 조용히 바꾸면 다른 파트의 구독/발행과 어긋납니다.
-
-| 토픽 | 타입 | 발행 | 구독 |
-|---|---|---|---|
-| `/water_quality/data` | `std_msgs/msg/String` (JSON) | `usv_sensors` | `usv_gcs` |
-| `/gps/fix` | `sensor_msgs/msg/NavSatFix` | `usv_sensors` | `usv_gcs` |
-| `/gps/has_fix` | `std_msgs/msg/Bool` | `usv_sensors` | `usv_gcs` |
-| `/gps/satellites`, `/gps/status` | `UInt8`, `String` | `usv_sensors` | 미구독 (진단용) |
-| `/camera/surface/image_raw`, `/camera/underwater/image_raw` | `sensor_msgs/msg/Image` | `usv_sensors` | `web_video_server` → GCS 웹 UI |
-| `/cmd_vel` | `geometry_msgs/msg/Twist` | `usv_gcs` (joy_to_cmd_node) | `usv_actuators`, `usv_gcs` (내부 표시) |
-| `/battery/status` | `std_msgs/msg/String` (JSON) | `usv_sensors` (current_sensor_node) | `usv_gcs` |
-| `/actuator/pump_cmd` | `std_msgs/msg/Bool` | `usv_gcs` | `usv_actuators` |
-| `/actuator/led_cmd` | `std_msgs/msg/ColorRGBA` | `usv_gcs` | `usv_actuators` |
-
-`/battery/status`의 JSON 구조:
-
-```json
-{
-  "thruster1":    {"current_a": 0.0, "percentage": 0},
-  "thruster2":    {"current_a": 0.0, "percentage": 0},
-  "pump_ctrl":    {"current_a": 0.0, "percentage": 0},
-  "sensor_board": {"current_a": 0.0, "percentage": 0}
-}
-```
-
-- 전류 센서 4개 모두 **물리적으로 B1 보드에 연결**되어 I2C 한 버스로 일괄 수신됩니다.
-- `usv_actuators`(B2)는 더 이상 배터리를 직접 계측하지 않습니다 — `thruster_driver_node`, `actuator_driver_node`는 PWM/릴레이 제어 역할만 남았습니다.
-
-### 노드 다이어그램
-
-목표로 하는 **최종 구조**입니다 (진행 상황이 아닙니다 — 완료 여부는 4항 체크리스트 참고).
-
-- **네모** = 노드
-- **화살표 위 글자** = 토픽 이름
-- **점선** = ROS 토픽이 아니거나(HTTP), GCS가 구독하지 않는 진단용 흐름
-
-`watchdog_node` / `heartbeat` / `usv_teleop`는 0항에 따라 제외되어 다이어그램에도 없습니다.
+## 2. 데이터 흐름
 
 ```mermaid
 flowchart LR
-  JOY([조이스틱 하드웨어])
-  BROWSER([웹 브라우저])
-  DIAG[[진단용 · GCS 미구독]]
+  WQN["water_quality_node<br/>(B1)"]
+  GCS["gui_main_node · joy_to_cmd_node<br/>(GCS)"]
+  ACT["actuator_driver_node<br/>(B2)"]
+  POL["water_policy.py<br/>판정 규칙"]
+  MCU["sketch.ino · STM32<br/>릴레이 · LED 핀"]
 
-  subgraph GCS["usv_gcs · GCS / Raspberry Pi"]
-    J2C[joy_to_cmd_node<br/>조이스틱 원격 제어]
-    GUI[gui_main_node<br/>모니터링 및 제어 UI]
-  end
+  WQN -->|"/water_quality/data (JSON)"| ACT
+  GCS -->|"/actuator/pump_cmd"| ACT
+  GCS -->|"/actuator/led_cmd"| ACT
+  GCS -.->|"/actuator/auto_mode (선택)"| ACT
+  ACT <-->|classify / pump_for / color_for| POL
+  ACT -->|"set_pump · set_actuator_led (RPC)"| MCU
+```
 
-  subgraph B1["usv_sensors · B1 · Arduino UNO Q"]
-    WQN[water_quality_node<br/>수질 센서 통합 수집]
-    GPSN[gps_driver_node<br/>GPS NMEA 파싱 및 측위]
-    CAMN[camera_node<br/>USB 카메라 2대 영상 수집]
-    WVS[web_video_server<br/>ROS → HTTP 변환기]
-    CSN[current_sensor_node<br/>전류 센서 4개 통합 계측]
-  end
+자동 입력(`/water_quality/data`)과 수동 입력(`/actuator/*_cmd`)이 **서로 다른 토픽**
+으로 도착하기 때문에, 어느 쪽이 보낸 명령인지 노드가 구분할 수 있다.
 
-  subgraph B2["usv_actuators · B2 · Arduino UNO Q"]
-    THR[thruster_driver_node<br/>추진기 PWM 제어]
-    ACT[actuator_driver_node<br/>펌프 릴레이 · RGB LED 제어]
-  end
+---
 
-  JOY -->|/joy| J2C
-  J2C -->|/cmd_vel| GUI
-  J2C -->|/cmd_vel| THR
+## 3. 인터페이스 — 다른 파트는 고칠 것이 없다
 
-  WQN -->|/water_quality/data| GUI
-  GPSN -->|/gps/fix| GUI
-  GPSN -->|/gps/has_fix| GUI
-  GPSN -.->|/gps/satellites, /gps/status| DIAG
-  CSN -->|/battery/status| GUI
+토픽 이름과 메시지 타입은 기존 계약 그대로다. **B1과 GCS는 아무것도 수정하지 않아도
+된다.**
 
-  CAMN -->|/camera/surface/image_raw| WVS
-  CAMN -->|/camera/underwater/image_raw| WVS
-  WVS -. HTTP MJPEG :8080 .-> BROWSER
-  GUI -. HTTP :8000 대시보드 .-> BROWSER
+| 토픽 | 타입 | 이 노드의 역할 | 비고 |
+|---|---|---|---|
+| `/water_quality/data` | `std_msgs/String` (JSON) | 신규 구독 | B1은 발행하던 것을 그대로 발행 |
+| `/actuator/pump_cmd` | `std_msgs/Bool` | 구독 (기존) | 수동 우선 |
+| `/actuator/led_cmd` | `std_msgs/ColorRGBA` | 구독 (기존) | 수동 우선 |
+| `/actuator/auto_mode` | `std_msgs/Bool` | 신규 구독 (선택) | 발행자 없으면 자동=켬 |
 
-  GUI -->|/actuator/pump_cmd| ACT
-  GUI -->|/actuator/led_cmd| ACT
+`/actuator/auto_mode`는 아직 아무도 발행하지 않는다. 나중에 GCS가 자동/수동 토글을
+추가할 때 이 노드를 고치지 않고 바로 붙일 수 있도록 미리 구독해 둔 것이다.
+
+MCU RPC(`set_pump`, `set_actuator_led`)는 **값이 실제로 바뀔 때만** 호출한다. 같은
+값을 1초마다 다시 보내 Bridge를 낭비하지 않는다.
+
+---
+
+## 4. 파일 구성
+
+```
+src/usv_actuators/
+├── usv_actuators/
+│   ├── water_policy.py           # 판정 규칙 (ROS 무관 · 순수 함수)
+│   └── actuator_driver_node.py   # 구독 · 억제 타이머 · MCU 전달
+├── launch/actuators.launch.py    # 임계값을 launch 인자로 노출
+└── DESIGN_pump_led.md            # 설계 의도 상세
+```
+
+`water_policy.py`에 ROS 의존성을 넣지 않은 이유는, 보드 없이 노트북에서도 판정
+규칙을 검증할 수 있게 하기 위해서다.
+
+```python
+>>> from usv_actuators import water_policy
+>>> water_policy.classify(38.0)
+'BAD'
+>>> water_policy.classify(41.0, previous='BAD')   # 히스테리시스 — 아직 못 빠져나옴
+'BAD'
+>>> water_policy.classify(44.0, previous='BAD')
+'NORMAL'
 ```
 
 ---
 
-## 🛠️ 2. 공통 준비 (모든 보드)
-
-```bash
-git clone <이 저장소>
-cd usv_project/usv_ws
-colcon build --symlink-install
-source install/setup.bash
-```
-
----
-
-## 🚀 3. 보드별 빌드 & 실행
-
-### B1 — `usv_sensors` (Docker)
-
-```bash
-cd usv_ws/src/usv_sensors
-pip install -r requirements.txt          # 이미지 안에서는 Dockerfile이 자동 처리
-./start_sensors.sh                       # 이미지 빌드(최초 1회) → 컨테이너 실행
-./install_autostart.sh                   # (선택) 부팅 시 자동 실행 등록
-```
-
-- 카메라 장치 번호는 명령줄로 넘기지 않습니다.
-- `usv_ws/src/usv_sensors/config/sensors_params.yaml`의 `surface_device` / `underwater_device` 값을 실제 번호로 고치면 다음 실행부터 자동 반영됩니다.
-
-### B2 — `usv_actuators` (Docker)
+## 5. 실행
 
 ```bash
 cd usv_ws/src/usv_actuators
 ./start_actuators.sh
-./install_autostart.sh                   # (선택)
 ```
 
-파라미터 오버라이드 예시 (모터 드라이버 PWM 범위 확정 후):
+임계값은 코드를 고치지 말고 launch 인자로 넘긴다. 실제 수조에서 `clarity_pct`가
+어느 범위로 나오는지 보고 조정하면 된다.
 
 ```bash
-ros2 launch usv_actuators actuators.launch.py max_pwm:=180
+ros2 launch usv_actuators actuators.launch.py bad_below:=35.0 good_above:=55.0
 ```
 
-### GCS — `usv_gcs` (Docker 불필요, Raspberry Pi 네이티브)
+| 인자 | 기본값 | 의미 |
+|---|---|---|
+| `bad_below` | `40.0` | 이 값 미만이면 나쁨 (펌프 ON, LED 빨강) |
+| `good_above` | `60.0` | 이 값 이상이면 좋음 (LED 초록) |
+| `margin` | `3.0` | 히스테리시스 폭 |
+| `pump_manual_hold_s` | `60.0` | 수동 펌프 조작이 자동보다 우선하는 시간(초) |
+| `led_manual_hold_s` | `60.0` | 수동 LED 조작이 자동보다 우선하는 시간(초) |
+| `stale_timeout_s` | `5.0` | 수질 데이터가 이만큼 끊기면 펌프 정지 |
+| `max_pwm` | `255` | 추진기 PWM 최대값 (기존 인자) |
+
+### 하드웨어 없이 확인하기
 
 ```bash
-sudo apt install ros-jazzy-web-video-server ros-jazzy-joy
-pip install -r usv_ws/src/usv_gcs/requirements.txt
-cd usv_ws
-colcon build --symlink-install
-source install/setup.bash
-ros2 launch usv_gcs gcs.launch.py
+# 나쁨 → 펌프 ON, LED 빨강
+ros2 topic pub --once /water_quality/data std_msgs/msg/String \
+  '{data: "{\"clarity_pct\": 25.0}"}'
+
+# 좋음 → 펌프 OFF, LED 초록
+ros2 topic pub --once /water_quality/data std_msgs/msg/String \
+  '{data: "{\"clarity_pct\": 80.0}"}'
+
+# 수동 우선 확인 — 이후 60초간 자동 판정이 억제된다
+ros2 topic pub --once /actuator/pump_cmd std_msgs/msg/Bool '{data: true}'
 ```
 
-- 브라우저에서 `http://<GCS IP>:8000` 접속 시 대시보드가 뜹니다.
-
-파라미터 오버라이드 예시 (조이스틱 축 확정 후):
-
-```bash
-ros2 launch usv_gcs gcs.launch.py linear_axis:=1 angular_axis:=0
-```
+노드 로그에 `수질 25.0% → BAD`, `수동 펌프 ON (60초간 자동 억제)` 같은 줄이 뜬다.
 
 ---
 
-## 📋 4. 파트별 작업 가이드
+## 6. 아직 안 된 것
 
-> 아래는 참고용 가이드입니다. **1항의 토픽 이름/메시지 타입(입출력)만 유지**하면, 내부 구현(파일 분할, 클래스 구조, 로직)은 담당자가 자유롭게 새로 짜도 됩니다. 체크리스트는 "확인해보면 좋은 것" 수준이며, 반드시 이 순서를 따라야 하는 건 아닙니다.
+- **B2 Arduino 스케치 미작성.** `set_pump`, `set_actuator_led` RPC 핸들러가 MCU 쪽에
+  없어서, 컨테이너가 떠도 실제 전기는 흐르지 않는다. ROS 레벨 판정 로직까지는 위
+  `ros2 topic pub`으로 전부 검증 가능하다.
+- **RPC 이름은 임시.** 실제 릴레이/LED 드라이버 배선을 확정하면서 이름을 맞춰야 한다.
+  LED 드라이버가 공통 애노드면 값 반전이 필요할 수 있다.
+- **임계값 40 / 60은 가정치.** 실제 수조에서 `clarity_pct`가 어느 범위로 나오는지
+  측정한 뒤 launch 인자로 조정할 것.
 
-### B1 담당자 — `usv_sensors`
-
-**이미 되어있는 것**
-
-- `water_quality_node` — 기존 `gps_and_water_quality_and_ros`(`ros_led`)의 수질 센서 로직을 그대로 포팅. `/water_quality/data` 토픽 하나로 JSON 중계. **수정 불필요**
-- `gps_driver_node` — 기존 `gps.py`를 거의 그대로 포팅. `/gps/fix`, `/gps/has_fix` 발행 포함. **수정 불필요**
-- `camera_node` — OpenCV로 USB 카메라 2대를 열어 `sensor_msgs/Image` 발행. 구조 완성
-- `sketch/sketch.ino`, `sketch/sketch.yaml` — 원래 레포의 아두이노 스케치(MCU에서 GPS UART + 수질 센서 핀을 읽고 `get_water_quality` / `get_gps` RPC 제공)를 그대로 복사
-  - `start_sensors.sh`가 부팅 시 이 스케치를 MCU에 자동으로 빌드·업로드
-  - **카메라 외에는 전원만 넣으면 GPS/수질 측정 → ROS 토픽 발행까지 자동으로 동작**
-
-**참고할 만한 것** (자유롭게 바꿔도 됨)
-
-- [ ] `config/sensors_params.yaml`의 `surface_device` / `underwater_device` 값(현재 0, 2) — 실제 보드에서 `v4l2-ctl --list-devices`로 확인한 번호로 이 YAML만 고치기 (코드·launch 파일은 안 고쳐도 됨)
-- [ ] 카메라 해상도/포맷이 고정 크기 필요하면 `cv2.VideoCapture`에 `set(cv2.CAP_PROP_...)` 호출 추가
-- [ ] 카메라는 MCU를 거치지 않고 Linux에서 직접 처리하므로 스케치 수정과 무관
-- [ ] `current_sensor_node`(신규) — 전류 센서 4개(추진기1/2, 펌프 제어부, 센서 보드)가 전부 B1에 I2C로 물려있음. 아래를 확정해서 `sketch.ino`에 반영:
-  - 실제 전류 센서 칩(예: INA219 / INA226)과 I2C 주소
-  - 배터리 용량 대비 `percentage` 환산식
-  - `sketch.yaml`에 해당 I2C 센서 라이브러리 추가
-  - MCU RPC 이름을 바꾸고 싶다면 `current_sensor_node.py`의 `Bridge.call('get_battery_status')` 호출부만 수정 (`grep -n "TODO(B1" *.py`로 위치 확인)
-
-**동작 확인용 참고**
-
-- `ros2 topic echo /camera/surface/image_raw --once`, `/camera/underwater/image_raw --once` — 실제 프레임 확인
-- `ros2 topic echo /water_quality/data`, `/gps/status`, `/battery/status` — MCU 측정값 확인
-
-### B2 담당자 — `usv_actuators`
-
-**이미 되어있는 것**
-
-- ROS 인터페이스(토픽 이름/타입, `/cmd_vel` 직접 구독) 완성
-- `/cmd_vel` → 좌/우 추진기 PWM 믹싱 공식(차동 구동) 구현됨
-- **배터리 계측 역할은 이 패키지에 없습니다** — 전류 센서 4개가 전부 B1에 물려있어서 `usv_sensors`의 `current_sensor_node`가 `/battery/status`로 통합 발행합니다.
-
-**참고할 만한 것 — 이 패키지가 가장 미완성 상태입니다** (자유롭게 바꿔도 됨)
-
-- [ ] Arduino 스케치(B2 보드용, 아직 없음)에 아래 RPC 핸들러 구현:
-  - `set_thruster_pwm(left, right)` — 모터 드라이버 핀에 PWM 출력
-  - `set_pump(on)` — 펌프 릴레이 on/off
-  - `set_actuator_led(r, g, b)` — RGB LED 핀 출력 (0~255, PWM 밝기 조절)
-  - RPC 이름을 바꾸고 싶다면 `thruster_driver_node.py`, `actuator_driver_node.py`의 `Bridge.notify(...)` 호출부만 수정 (`grep -n "TODO(B2" *.py`로 위치 확인)
-- [ ] `thruster_driver_node.py`의 좌/우 믹싱 공식이 실제 추진기 배치(개수·위치)와 다르면 `on_cmd_vel()` 로직 교체
-- [ ] `usv_actuators/app.yaml`을 실제 Arduino App Lab 앱 이름에 맞춰 확인
-
-**동작 확인용 참고**
-
-- `ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}}"` — 추진기 반응 확인
-
-### GCS 담당자 — `usv_gcs`
-
-**이미 되어있는 것**
-
-- `joy_to_cmd_node` — `/joy` → `/cmd_vel` 변환 로직 완성 (축 번호만 확인 필요)
-- `gui_main_node` — 모든 구독/발행 배선 완성
-  - Flask 웹 대시보드(`dashboard_html.py`)가 수질/GPS/배터리/cmd_vel을 1초 주기로 갱신
-  - 펌프 on/off · LED 색상 컨트롤 포함
-  - 듀얼 카메라 스트림은 `web_video_server` 주소를 그대로 `<img>`로 표시
-
-**참고할 만한 것** (자유롭게 바꿔도 됨)
-
-- [ ] 실제 조이스틱으로 `ros2 topic echo /joy` 확인 → 축 번호를 `gcs.launch.py`의 `linear_axis` / `angular_axis` 인자로 반영 (코드는 안 고쳐도 됨)
-- [ ] `dashboard_html.py`는 기능 위주 최소 스타일링 상태 — 디자인/레이아웃은 자유롭게 개선 가능 (단, API 응답 구조 `/api/state`는 유지 — `gui_main_node.py`와 계약이 걸려 있음)
-- [ ] `gui_main_node.py`의 `BATTERY_WARNING_PCT`(20%)는 실제 배터리 사양 확정되면 조정
-- [ ] "GPS 신호 없음" 배너나 배터리 경고색 기준 등 UX는 자유롭게 개선 가능
-
-**동작 확인용 참고**
-
-- `usv_sensors` / `usv_actuators`를 동시에 띄운 상태에서 대시보드(`http://<GCS IP>:8000`)에 실시간 값이 뜨는지, 펌프/LED 버튼이 동작하는지 확인
+설계 의도와 대안 검토 과정은 [`src/usv_actuators/DESIGN_pump_led.md`](src/usv_actuators/DESIGN_pump_led.md)에 정리되어 있다.
 
 ---
 
-## ✅ 5. 설계 결정 확인 사항
+## 7. 논의 필요 ⚠️ — 조이스틱 펌프 조작과 자동 제어가 충돌한다
 
-0항 요구사항을 그대로 따른 부분입니다.
+**이 브랜치를 그대로 머지하면 자동 제어가 동작하지 않는다.** 코드 문제라기보다
+브랜치를 딴 뒤 GCS 쪽 설계가 바뀌면서 생긴 전제 불일치라, 어떻게 맞출지 팀 논의가
+필요하다.
 
-- `watchdog_node`(failsafe)는 0항 "이번 범위에서 제외한 것"에 따라 **아예 만들지 않았습니다**
-  - `thruster_driver_node`는 `/cmd_vel_safe`가 아니라 `/cmd_vel`을 직접 구독
-- `/gps/satellites`, `/gps/status`는 `gps_driver_node` 안에 발행 코드는 남겨뒀지만 `gui_main_node`는 구독하지 않습니다 (0항 "GPS 진단 토픽 처리 규칙")
-- `usv_interfaces`(커스텀 msg) 패키지는 **만들지 않았습니다**
-  - 인터페이스 규격이 전부 `std_msgs` / `sensor_msgs` / `geometry_msgs` 표준 타입만 쓰도록 확정
-  - 한때 검토했던 커스텀 msg 계획은 폐기된 것으로 보고 반영
+### 무엇이 어긋났나
 
----
+`actuator_driver_node`는 이렇게 전제하고 있다.
 
-## 🐳 6. Docker 관련 참고
+> `/actuator/pump_cmd` 메시지가 도착 = 사람이 펌프 버튼을 눌렀다
+> → 60초간 자동 판정을 억제한다
 
-0항의 Docker 필수 조건은 **UNO Q에서 도는 `usv_sensors`, `usv_actuators`에만 해당**합니다. Raspberry Pi의 `usv_gcs`에는 적용되지 않으므로 Dockerfile이 없습니다.
+브랜치를 만들 당시에는 맞는 전제였다. 그때는 GUI 화면의 펌프 버튼만 이 토픽을
+발행했고, 사람이 클릭할 때만 메시지가 갔다.
 
-`usv_sensors/`, `usv_actuators/` 각 폴더에 아래 파일이 들어있어, 나중에 독립 레포로 분리되어도 그대로 쓸 수 있습니다.
+그 뒤 업스트림에 `usv_gcs: move pump control to joystick, GUI shows status only`가
+들어오면서 발행 주체가 조이스틱으로 바뀌었다.
 
-| 파일 | 역할 |
-|---|---|
-| `Dockerfile` | `ros:jazzy-ros-base` 기반 이미지. pip 의존성 설치 + `colcon build` |
-| `app.yaml` | Arduino App Lab 앱 메타데이터 |
-| `sketch/sketch.ino`, `sketch/sketch.yaml` | MCU(STM32)에서 실행되는 아두이노 스케치. `arduino-app-cli app start`가 부팅마다 빌드·업로드 |
-| `start_sensors.sh` / `start_actuators.sh` | 이미지 빌드(최초 1회) → `arduino-app-cli app start`(스케치 포함) → RouterBridge 소켓 대기 → 컨테이너 실행 |
-| `systemd/usv-*.service` + `install_autostart.sh` | 부팅 시 자동 실행 등록 |
+```python
+# usv_gcs/joy_to_cmd_node.py — joy_callback()
+if len(msg.buttons) > self.pump_button:      # "버튼이 눌렸으면"이 아니라 "버튼이 있으면"
+    pump_msg.data = bool(msg.buttons[self.pump_button])
+    self.pump_pub.publish(pump_msg)          # 안 눌러도 false를 계속 발행
+```
 
-`start_sensors.sh` / `start_actuators.sh`는 **Arduino App Lab 프레임워크가 보드에 이미 설치되어 있다는 전제**로 `arduino-app-cli app start user:<앱이름>`을 호출합니다.
+조건이 "버튼이 눌렸으면"이 아니라 "버튼이 존재하면"이다. 즉 버튼을 누르지 않아도
+`false`가 계속 발행된다. 배를 조종하려고 스틱을 움직이는 동안 `/joy`가 들어올
+때마다 `/actuator/pump_cmd: false`가 같이 나간다.
 
-- **`usv_sensors`**: `sketch/` 폴더 포함 → `install_autostart.sh` 설치 후 **전원만 넣으면 GPS/수질 측정 → ROS 토픽 발행까지 자동 동작**
-- **`usv_actuators`**: 실제 Arduino 스케치가 아직 없음 (4항 B2 체크리스트) → 스케치를 작성해 `usv_actuators/sketch/`에 추가하고 App Lab에 등록하기 전까지는 컨테이너가 떠도 하드웨어 제어는 동작하지 않음
+### 증상
+
+`on_pump_cmd`가 메시지마다 `pump_hold_until = now + 60s`로 억제 타이머를 갱신하므로,
+타이머가 만료되지 않는다.
+
+| 시각 | 실제 상황 | 노드의 해석 | 억제 타이머 |
+|---|---|---|---|
+| 0.00초 | 스틱 밀어서 전진 | 사람이 펌프 조작함 | 60초로 리셋 |
+| 0.05초 | 계속 전진 중 | 사람이 펌프 조작함 | 60초로 리셋 |
+| … | … | … | 영원히 만료 안 됨 |
+
+자동 판정 코드까지 실행이 도달하지 못하므로, **조종하는 내내 수질이 나빠져도 펌프가
+켜지지 않는다.** 조종을 멈추고 60초를 기다려야 자동이 돌아온다.
+
+### 제안 — 값이 바뀔 때만 수동으로 친다 (권장)
+
+`false, false, false…`가 반복되는 것은 조작이 아니라 상태 보고다. 값이 실제로 바뀐
+순간만 사람의 조작으로 해석하면 된다. `actuator_driver_node`만 고치면 되고 GCS와 B1은
+건드리지 않는다.
+
+```python
+# __init__
+self.last_manual_pump = None
+
+def on_pump_cmd(self, msg: Bool):
+    want = bool(msg.data)
+    if want == self.last_manual_pump:   # 같은 값 반복 = 조작 아님
+        return
+    self.last_manual_pump = want
+
+    hold = self.get_parameter('pump_manual_hold_s').value
+    self.pump_hold_until = self.now() + hold
+    self.send_pump(want)
+```
+
+### 검토한 대안
+
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| **A. 값 변화 감지** (위 제안) | B2만 수정, 다른 파트 영향 없음 | 조이스틱 버튼을 계속 누르고 있는 조작은 한 번으로 친다 |
+| B. `/actuator/auto_mode` 토글로 명시 전환 | 의도가 가장 분명함 | GCS에 토글 UI 추가 필요, 자동↔수동 전환을 사람이 매번 해야 함 |
+| C. `joy_to_cmd_node`가 버튼이 눌렸을 때만 발행 | 원인 지점을 고침 | GCS 담당 파트 수정 필요, 버튼을 뗀 시점을 B2가 알 수 없음 |
+
+### 결정해야 할 것
+
+- [ ] A / B / C 중 어느 방향으로 갈지
+- [ ] 조이스틱 펌프 버튼을 **누르고 있는 동안만 ON**으로 볼지, **누를 때마다 토글**로 볼지
+      (전자라면 대안 A의 단점이 실제 문제가 되므로 C를 같이 검토해야 한다)
+- [ ] `pump_manual_hold_s` 기본 60초가 실제 운용에 맞는지
