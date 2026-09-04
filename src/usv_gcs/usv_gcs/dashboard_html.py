@@ -130,6 +130,26 @@ function convertGpsToPixel(lat, lng) {
 
 let isGpsReceived = false;
 
+// --- [미니맵] 구글 정적맵 위성 사진 위에 실제 GPS 좌표를 표시 ---
+// TODO: 구글 맵 Static API 키 채워넣기. 저장소가 public이라 여기 직접 커밋하지 말 것
+// (팀 키 사용 여부/도메인 제한 확인 후 배포 환경에서만 주입 권장).
+const googleApiKey = "";
+const miniMapImg = new Image();
+let currentLat = (gpsBounds.minLat + gpsBounds.maxLat) / 2;
+let currentLng = (gpsBounds.minLng + gpsBounds.maxLng) / 2;
+
+function updateMiniMapUrl(lat, lng) {
+    currentLat = lat ?? currentLat;
+    currentLng = lng ?? currentLng;
+    miniMapImg.src = `https://maps.googleapis.com/maps/api/staticmap?center=${currentLat},${currentLng}&zoom=17&size=130x137&maptype=satellite&key=${googleApiKey}`;
+
+    miniMapImg.onerror = function() {
+        console.error("❌ 구글맵 이미지 로드 실패! API 키, 결제 카드 등록 여부 또는 Static Maps API 활성화를 확인하세요.");
+    };
+}
+
+updateMiniMapUrl(currentLat, currentLng);
+
 // 조종은 조이스틱(joy_to_cmd_node)이 하고, 이 화면은 그 결과를 보여주기만 한다.
 let lastCmdVel = { linearX: 0, angularZ: 0 };
 
@@ -156,6 +176,7 @@ async function refreshState() {
             let pos = convertGpsToPixel(s.gps_fix.latitude, s.gps_fix.longitude);
             targetX = pos.x;
             targetY = pos.y;
+            updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
             if (!isGpsReceived) {
                 isGpsReceived = true;
                 console.log("🛰️ 첫 GPS 좌표 수신 완료!");
@@ -790,8 +811,8 @@ function mainLoop() {
         ctx.fillRect(10, 10, 140, 165);
         ctx.strokeRect(10, 10, 140, 165);
 
-        if (assets.lake.complete && assets.lake.naturalWidth !== 0) {
-            ctx.drawImage(assets.lake, 15, 15, 130, 137);
+        if (miniMapImg.complete && miniMapImg.naturalWidth !== 0) {
+            ctx.drawImage(miniMapImg, 15, 15, 130, 137);
         } else {
             ctx.fillStyle = "#4078b4";
             ctx.fillRect(15, 15, 130, 137);
