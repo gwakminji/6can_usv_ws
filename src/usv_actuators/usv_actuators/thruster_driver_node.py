@@ -1,80 +1,129 @@
 #!/usr/bin/env python3
+"""thruster_driver_node — usv_actuators 패키지 (B2 보드).
+
+구독: /cmd_vel [geometry_msgs/msg/Twist]
+Direct Bridge RPC 호출 방식으로 MCU 스케치('set_thruster_pwm') 직접 제어.
+"""
+
+import time
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-import os
 
-# 1. 경로 통일 (App Lab main.py의 CMD 경로와 완전히 동일하게 설정)
-CMD_FILE = "/app/python/cmd.txt"  # Docker 볼륨 경로 확인 필요
-NEUTRAL = 1487
+from .bridge import Bridge
+from .telemetry import bounded_integer
+
+NEUTRAL_PWM = 1487
 DEADBAND = 35
 MAX_DELTA = 400
+STEP_US = 20
+REVERSE_PAUSE = 0.3
 
-class ThrusterDriver(Node):
+
+class ThrusterDriverNode(Node):
+
     def __init__(self):
-        super().__init__('thruster_driver')
-        self.subscription = self.create_subscription(
+        super().__init__('thruster_driver_node')
+
+        self.cmd_sub = self.create_subscription(
             Twist,
             '/cmd_vel',
-            self.cmd_vel_callback,
+            self.on_cmd_vel,
             10
         )
-        self.get_logger().info('ROS 2 Thruster Driver Started. Target: ' + CMD_FILE)
 
-    def cmd_vel_callback(self, msg):
-        linear = msg.linear.x
-        angular = msg.angular.z
+        self.cur_left = NEUTRAL_PWM
+        self.cur_right = NEUTRAL_PWM
+        self.hold_until = 0.0
+
+        self.target_left = NEUTRAL_PWM
+        self.target_right = NEUTRAL_PWM
+
+        # 20Hz (0.05초) 타이머로 Ramp 및 Bridge.notify 실행
+        self.timer = self.create_timer(0.05, self.control_loop)
+
+        self.get_logger().info('Thruster Driver Node Started (Direct Bridge RPC Mode)')
+
+    def on_cmd_vel(self, msg: Twist):
+        linear = max(-1.0, min(1.0, msg.linear.x))
+        angular = max(-1.0, min(1.0, msg.angular.z))
 
         left_raw = linear - angular
         right_raw = linear + angular
 
-        # 2. 차동 구동 믹싱 값 노멀라이즈 (-1.0 ~ 1.0 제한)
-        max_val = max(abs(left_raw), abs(right_raw), 1.0)
-        left_norm = left_raw / max_val
-        right_norm = right_raw / max_val
+        scale = max(1.0, abs(left_raw), abs(right_raw))
+        left_norm = left_raw / scale
+        right_norm = right_raw / scale
 
-        left_pwm = self.calc_pwm(left_norm)
-        right_pwm = self.calc_pwm(right_norm)
+        self.target_left = self.calc_pwm(left_norm)
+        self.target_right = self.calc_pwm(right_norm)
+
+    def calc_pwm(self, val: float) -> int:
+        if abs(val) < 0.01:
+            return NEUTRAL_PWM
+
+        delta = bounded_integer(round(val * MAX_DELTA), -MAX_DELTA, MAX_DELTA)
+
+        if delta > 0:
+            return NEUTRAL_PWM + DEADBAND + delta
+        elif delta < 0:
+            return NEUTRAL_PWM - DEADBAND + delta
+        else:
+            return NEUTRAL_PWM
+
+    @staticmethod
+    def sign(v: int) -> int:
+        if v > NEUTRAL_PWM: return 1
+        if v < NEUTRAL_PWM: return -1
+        return 0
+
+    def ramp(self, cur: int, target: int) -> int:
+        if abs(target - NEUTRAL_PWM) <= abs(cur - NEUTRAL_PWM):
+            return target
+        if target > cur:
+            return min(target, cur + STEP_US)
+        else:
+            return max(target, cur - STEP_US)
+
+    def control_loop(self):
+        now = time.time()
+
+        if (self.sign(self.target_left) * self.sign(self.cur_left) < 0 or
+                self.sign(self.target_right) * self.sign(self.cur_right) < 0):
+            if self.hold_until < now:
+                self.hold_until = now + REVERSE_PAUSE
+            self.cur_left = NEUTRAL_PWM
+            self.cur_right = NEUTRAL_PWM
+        elif self.hold_until > now:
+            self.cur_left = NEUTRAL_PWM
+            self.cur_right = NEUTRAL_PWM
+        else:
+            self.cur_left = self.ramp(self.cur_left, self.target_left)
+            self.cur_right = self.ramp(self.cur_right, self.target_right)
 
         try:
-            tmp = CMD_FILE + ".tmp"
-            with open(tmp, 'w') as f:
-                f.write(f"{left_pwm},{right_pwm}\n")
-            os.replace(tmp, CMD_FILE)
-        except Exception as e:
-            self.get_logger().error(f"Failed to write cmd.txt: {e}")
+            # MCU로 직접 Bridge RPC 호출
+            Bridge.notify('set_thruster_pwm', self.cur_left, self.cur_right)
+        except Exception as error:
+            self.get_logger().warning(f'Thruster Bridge RPC error: {error}')
 
-    def calc_pwm(self, val):
-        if abs(val) < 0.01:
-            return NEUTRAL
-        
-        delta = max(-MAX_DELTA, min(MAX_DELTA, int(val * MAX_DELTA)))
-        
-        if delta > 0:
-            return NEUTRAL + DEADBAND + delta
-        elif delta < 0:
-            return NEUTRAL - DEADBAND + delta
-        else:
-            return NEUTRAL
 
 def main(args=None):
     rclpy.init(args=args)
-    node = ThrusterDriver()
+    node = ThrusterDriverNode()
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        # 안전한 종료 처리 (중립값 전송)
         try:
-            tmp = CMD_FILE + ".tmp"
-            with open(tmp, 'w') as f:
-                f.write(f"{NEUTRAL},{NEUTRAL}\n")
-            os.replace(tmp, CMD_FILE)
+            Bridge.notify('set_thruster_pwm', NEUTRAL_PWM, NEUTRAL_PWM)
         except Exception:
             pass
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
