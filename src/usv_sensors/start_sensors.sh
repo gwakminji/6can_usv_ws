@@ -12,6 +12,18 @@ IMAGE_NAME="usv_sensors_image"
 
 cd "$PROJECT_DIR"
 
+# arduino-app-cli only finds an App by looking for a folder with its name
+# under ~/ArduinoApps/. A fresh clone of this repo doesn't live there, so
+# register it with a symlink the first time this script runs (idempotent —
+# this is what makes a clean clone + install_autostart.sh work after a
+# reboot with no manual setup).
+APP_LINK="$HOME/ArduinoApps/usv_sensors"
+if [ ! -e "$APP_LINK" ]; then
+    echo "[*] Registering usv_sensors with App Lab (~/ArduinoApps)..."
+    mkdir -p "$HOME/ArduinoApps"
+    ln -s "$PROJECT_DIR" "$APP_LINK"
+fi
+
 if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     echo "[0] Docker image missing; building it..."
     docker build -t "$IMAGE_NAME" "$PROJECT_DIR"
