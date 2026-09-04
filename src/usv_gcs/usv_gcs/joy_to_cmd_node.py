@@ -16,7 +16,8 @@ class JoyToCmdNode(Node):
         self.declare_parameter('linear_axis', 1)      # 전후진 축 번호
         self.declare_parameter('angular_axis', 0)     # 좌우 회전 축 번호
         self.declare_parameter('linear_scale', 1.0)    # m/s
-        self.declare_parameter('angular_scale', 1.0)   # rad/s
+        # 실측: 오른쪽으로 밀면 axes[0]=-1.0 이라서, 우회전 시 angular가 +가 되도록 부호 반전
+        self.declare_parameter('angular_scale', -1.0)   # rad/s
         self.declare_parameter('deadzone', 0.05)
         # 펌프/워터캐논 작동 버튼 번호. 조종은 조이스틱 하나로만 하므로(마우스로 GUI
         # 버튼을 누를 사람이 없음) 여기서 발행한다. 0번(Xbox 계열 컨트롤러 기준 A 버튼)으로
