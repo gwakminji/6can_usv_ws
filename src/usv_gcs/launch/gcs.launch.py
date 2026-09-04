@@ -34,7 +34,8 @@ def generate_launch_description():
         description='조이스틱 좌/우 회전 축 번호',
     )
     linear_scale_arg = DeclareLaunchArgument('linear_scale', default_value='1.0')
-    angular_scale_arg = DeclareLaunchArgument('angular_scale', default_value='1.0')
+    # 실측: 오른쪽으로 밀면 axes[0]=-1.0 이라서, 우회전 시 angular가 +가 되도록 부호 반전
+    angular_scale_arg = DeclareLaunchArgument('angular_scale', default_value='-1.0')
     pump_button_arg = DeclareLaunchArgument(
         'pump_button', default_value='0',
         description='펌프/워터캐논 작동 버튼 번호 (GCS 담당자가 실제 조이스틱 기준으로 확정)',
