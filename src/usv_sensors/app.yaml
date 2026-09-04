@@ -3,6 +3,6 @@
 
 name: usv_sensors
 description: "USV B1 board: water-quality + GPS sensors and dual USB cameras (ROS 2 Jazzy)."
-icon: "USV"
+icon: "🚤"
 ports: []
 bricks: []

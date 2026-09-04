@@ -5,3 +5,6 @@ __pycache__/
 build/
 install/
 log/
+
+# arduino-app-cli build cache
+src/*/.cache/
