@@ -11,6 +11,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${CAMERA_STREAMING_PROJECT_DIR:-$SCRIPT_DIR}"
 CONTAINER_NAME="camera_streaming_container"
 IMAGE_NAME="camera_streaming_image"
+SURFACE_DEVICE="${SURFACE_DEVICE:-/dev/video0}"
+UNDERWATER_DEVICE="${UNDERWATER_DEVICE:-/dev/video6}"
 
 cd "$PROJECT_DIR"
 
@@ -35,6 +37,8 @@ docker run -d \
     --restart unless-stopped \
     --privileged \
     -e ROS_DOMAIN_ID=0 \
+    -e SURFACE_DEVICE="$SURFACE_DEVICE" \
+    -e UNDERWATER_DEVICE="$UNDERWATER_DEVICE" \
     -v /dev:/dev \
     -v "$PROJECT_DIR:/ros2_ws/src/camera_streaming" \
     "$IMAGE_NAME" \
@@ -43,7 +47,9 @@ docker run -d \
         cd /ros2_ws
         colcon build --symlink-install --packages-select camera_streaming
         source /ros2_ws/install/setup.bash
-        ros2 launch camera_streaming camera_streaming.launch.py
+        ros2 launch camera_streaming camera_streaming.launch.py \
+            surface_device:="$SURFACE_DEVICE" \
+            underwater_device:="$UNDERWATER_DEVICE"
     '
 
 echo "[3] camera_streaming nodes started (camera_node, http_video_server, HTTP :8000)."

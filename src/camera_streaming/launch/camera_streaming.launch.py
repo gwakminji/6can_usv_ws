@@ -20,10 +20,10 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'surface_device', default_value='/dev/video2',
+            'surface_device', default_value='/dev/video0',
             description='V4L2 device path for the surface camera'),
         DeclareLaunchArgument(
-            'underwater_device', default_value='/dev/video3',
+            'underwater_device', default_value='/dev/video6',
             description='V4L2 device path for the underwater camera'),
         DeclareLaunchArgument(
             'port', default_value='8000',
