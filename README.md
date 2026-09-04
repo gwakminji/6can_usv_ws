@@ -155,6 +155,13 @@ cd usv_project/usv_ws
 
 - 카메라 장치 경로: `camera_streaming/launch/camera_streaming.launch.py`의 `surface_device`/`underwater_device` (기본 `/dev/video2`/`3`)
 - `usv_sensors/config/sensors_params.yaml`은 이제 미사용(카메라가 옮겨감)
+- **B1 보드의 IP 확인** (GCS가 카메라를 보려면 이 IP가 필요 — 아래 GCS 절 참고): B1에 SSH로 붙어서
+  ```bash
+  hostname -I
+  ```
+  첫 번째로 나오는 주소를 씁니다. Wi-Fi 대역이 여러 개 잡히면 실제로 GCS와 같은 네트워크에
+  있는 주소를 골라야 합니다 (`ip addr`로 인터페이스별 확인). SSH가 아예 안 되면 공유기
+  관리 페이지의 DHCP 클라이언트 목록에서 보드 이름으로 찾을 수 있습니다.
 
 ### B2 — `usv_actuators`
 
@@ -178,8 +185,17 @@ source install/setup.bash
 ros2 launch usv_gcs gcs.launch.py camera_host:=<B1_IP>
 ```
 
-`camera_host`는 필수입니다 — 안 넘기면 카메라 스트림이 잘못된 주소를 가리킵니다. 브라우저:
-`http://<GCS IP>:8000`.
+`camera_host`(B1 IP, 위 B1 절에서 확인)는 필수입니다 — 안 넘기면 카메라 스트림이 잘못된
+주소를 가리킵니다. 매번 명령에 타이핑하기 싫으면 **명령줄 대신 파일에 한 번만 적어둘 수도
+있습니다**:
+
+```bash
+# src/usv_gcs/config/gcs_params.yaml
+camera_host: "<B1_IP>"
+```
+
+이렇게 해두면 인자 없이 그냥 `ros2 launch usv_gcs gcs.launch.py`만 실행해도 됩니다. 두
+방법을 같이 쓰면 launch 인자가 우선합니다. 브라우저: `http://<GCS IP>:8000`.
 
 ```bash
 ros2 launch usv_gcs gcs.launch.py linear_axis:=1 angular_axis:=0 pump_button:=0 auto_button:=1
@@ -202,7 +218,12 @@ ros2 launch usv_gcs gcs.launch.py linear_axis:=1 angular_axis:=0 pump_button:=0 
 
 - [x] `camera_node`, `http_video_server` — 코드 완료, 합성 프레임으로 파이프라인 검증됨
 - [ ] 실제 USB 카메라 미연결 (`CAMERA_STREAMING.md` 참고)
-- 확인: `curl http://<B1 IP>:8000/`, `ros2 topic echo /camera/surface/image_raw --once`
+
+**카메라 확인 (B1 위에서, 순서대로)**
+1. 컨테이너: `docker ps | grep camera_streaming` — 떠 있는지
+2. 장치 인식: `v4l2-ctl --list-devices` — 실제 `/dev/videoN` 번호가 launch 인자(`surface_device`/`underwater_device`)와 일치하는지
+3. 토픽 발행: `ros2 topic echo /camera/surface/image_raw --once` — 응답 없으면 카메라를 못 열고 있는 것 (`docker logs camera_streaming_container --tail 50`에서 `could not open ... will retry` 확인)
+4. HTTP 서버 자체: `curl http://localhost:8000/`, `curl -o /tmp/s.jpg "http://localhost:8000/snapshot?topic=/camera/surface/image_raw"` 후 `/tmp/s.jpg`가 정상 JPEG인지
 
 ### B2 — `usv_actuators`
 
@@ -217,7 +238,13 @@ ros2 launch usv_gcs gcs.launch.py linear_axis:=1 angular_axis:=0 pump_button:=0 
 - [ ] 실제 조이스틱 축/버튼 번호 확인 → `linear_axis`/`angular_axis`/`pump_button`/`auto_button` 인자로 반영 (`ros2 topic echo /joy`)
 - [ ] `BATTERY_WARNING_PCT`(20%) — 배터리 사양 확정되면 조정
 - [ ] (선택) 미니맵용 `google_maps_api_key` — 안 넣으면 정적 이미지로 폴백
-- 확인: 대시보드(`http://<GCS IP>:8000`)에서 실시간 값·펌프/LED 상태·카메라 스트림 확인
+- 확인: 대시보드(`http://<GCS IP>:8000`)에서 실시간 값·펌프/LED 상태 확인
+
+**카메라 확인 (GCS 위에서)**
+1. `camera_host`가 실제로 반영됐는지: 대시보드 페이지 소스에서 `cameraHost = "..."` 값 확인 (빈 문자열이면 인자/설정 파일 둘 다 안 먹은 것)
+2. B1과 통신 되는지: `ping <B1 IP>`
+3. B1의 스트림 URL을 브라우저로 직접 열어보기: `http://<B1 IP>:8000/stream?topic=/camera/surface/image_raw` — 여기서도 안 뜨면 GCS가 아니라 B1 쪽 문제 (위 B1 체크리스트로)
+4. 여기까진 되는데 대시보드에서만 안 뜨면 `camera_host` 값 오타/네트워크 분리 의심
 
 ### 알려진 미정리 항목 (동작엔 지장 없음)
 

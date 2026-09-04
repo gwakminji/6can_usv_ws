@@ -1,0 +1,6 @@
+# GCS 담당자용 파라미터 파일. 매번 `ros2 launch ... camera_host:=...`처럼 인자를 안 붙이고
+# 싶으면 여기 값만 고치면 된다 (다시 실행하면 바로 반영). launch 인자로 camera_host를
+# 따로 넘기면 그쪽이 이 파일보다 우선한다.
+#
+# camera_host: B1 보드의 IP. B1 보드에서 `hostname -I` 실행해서 확인 (README.md 3항 참고).
+camera_host: ""

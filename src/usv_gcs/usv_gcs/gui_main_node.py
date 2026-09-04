@@ -30,6 +30,10 @@
 이 노드의 웹 대시보드(dashboard_html.py)는 camera_host 파라미터로 그 주소를 알아내
 <img> 태그로 그대로 표시한다.
 
+camera_host는 두 가지 방법으로 줄 수 있다: (1) launch 인자로 매번 넘기거나
+(2) config/gcs_params.yaml에 한 번 적어두기. launch 인자를 안 넘기면(빈 문자열 기본값)
+이 노드가 gcs_params.yaml을 읽어서 대신 쓴다 — launch 인자가 우선이다.
+
 전류 센서 4개(추진기1/2, 펌프 제어부, 센서 보드)는 전부 B1 보드에 물려있어서
 usv_sensors의 current_sensor_node가 /battery/status 하나로 통합 발행한다. 예전에
 usv_actuators가 따로 발행하던 /battery/thruster, /battery/actuator는 삭제되었다.
@@ -39,7 +43,10 @@ usv_actuators가 따로 발행하던 /battery/thruster, /battery/actuator는 삭
 """
 
 import json
+import os
 import threading
+
+import yaml
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -68,7 +75,8 @@ class GuiMainNode(Node):
         self.declare_parameter('http_port', 8000)
         # 카메라 스트림은 GCS가 아니라 B1 보드 위 camera_streaming 패키지(http_video_server,
         # 고정 포트 8000)가 직접 서빙한다. GCS는 B1의 IP를 알 방법이 없으므로 launch 인자로
-        # 받는다. 비워두면 dashboard_html.py가 GCS 자신의 호스트로 폴백한다(대부분 틀린 주소).
+        # 받는다. 비워두면(기본값) create_app()이 config/gcs_params.yaml을 대신 읽는다 -
+        # 매번 launch 인자로 IP를 안 넘기고 싶으면 그 파일에 한 번만 적어두면 된다.
         self.declare_parameter('camera_host', '')
 
         self.state_lock = threading.Lock()
@@ -152,13 +160,31 @@ class GuiMainNode(Node):
         self.led_pub.publish(msg)
 
 
+def _camera_host_from_config() -> str:
+    """config/gcs_params.yaml의 camera_host 값을 읽는다 (launch 인자를 안 넘겼을 때 폴백).
+
+    B1 IP가 자주 안 바뀌면 launch 인자로 매번 넘기는 대신 이 파일에 한 번만 적어두는 게
+    편하다. 파일이 없거나 값이 비어있으면 조용히 빈 문자열을 돌려준다.
+    """
+    config_path = os.path.join(
+        get_package_share_directory('usv_gcs'), 'config', 'gcs_params.yaml'
+    )
+    try:
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+        return str(data.get('camera_host') or '')
+    except (OSError, yaml.YAMLError):
+        return ''
+
+
 def create_app(node: GuiMainNode) -> Flask:
     # 대시보드(INDEX_HTML)가 참조하는 배/물고기/쓰레기 이미지 에셋은 web/에 설치되어 있고,
     # static_url_path=''라서 "lake.png" 같은 상대 경로 그대로 루트에서 서빙된다.
     web_dir = get_package_share_directory('usv_gcs') + '/web'
     app = Flask(__name__, static_folder=web_dir, static_url_path='')
 
-    camera_host = node.get_parameter('camera_host').value
+    # launch 인자가 우선, 안 넘겼으면(빈 문자열) gcs_params.yaml을 대신 읽는다.
+    camera_host = node.get_parameter('camera_host').value or _camera_host_from_config()
     rendered_index_html = INDEX_HTML.replace('__CAMERA_HOST__', camera_host)
 
     @app.get('/')
