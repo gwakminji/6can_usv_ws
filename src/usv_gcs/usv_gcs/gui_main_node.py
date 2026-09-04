@@ -10,17 +10,25 @@
   /cmd_vel             [geometry_msgs/msg/Twist]     조이스틱 인디케이터 표시용
   /actuator/pump_cmd   [std_msgs/msg/Bool]           joy_to_cmd_node가 조이스틱 버튼으로
                                                        발행 - 여기선 상태 표시용으로만 구독
+  /actuator/pump_state [std_msgs/msg/Bool]           B2가 발행하는 펌프 실제 상태(명령과
+                                                       다를 수 있음) - 상태 표시용으로만 구독
+  /actuator/led_state  [std_msgs/msg/ColorRGBA]      B2가 발행하는 LED 실제 상태 - 상태
+                                                       표시용으로만 구독
+  /actuator/auto_mode  [std_msgs/msg/Bool]           joy_to_cmd_node가 조이스틱 버튼으로
+                                                       발행 - 여기선 상태 표시용으로만 구독
 발행:
   /actuator/led_cmd    [std_msgs/msg/ColorRGBA]
 
-조종은 조이스틱 하나로만 하므로(마우스로 GUI 버튼을 누를 사람이 없음) 펌프는
-joy_to_cmd_node가 발행하고, 이 노드는 그 상태를 /api/state로 보여주기만 한다.
-LED는 아직 조이스틱에 버튼을 안 배정해서 계속 GUI 쪽 컨트롤(/api/led)로 남겨뒀다.
+조종은 조이스틱 하나로만 하므로(마우스로 GUI 버튼을 누를 사람이 없음) 펌프와 자동/수동
+전환은 joy_to_cmd_node가 조이스틱 버튼으로 발행하고, 이 노드는 그 상태를 /api/state로
+보여주기만 한다. LED는 아직 조이스틱에 버튼을 안 배정해서 계속 GUI 쪽 컨트롤(/api/led)로
+남겨뒀다.
 
-듀얼 카메라 MJPEG 스트림은 이 노드가 직접 발행하지 않는다. web_video_server를 별도
-실행해서 /camera/surface/image_raw, /camera/underwater/image_raw 토픽을 HTTP로 변환해야
-하고, 이 노드의 웹 대시보드(dashboard_html.py)는 그 스트림 주소를 <img> 태그로 그대로
-표시한다.
+듀얼 카메라 MJPEG 스트림은 이 노드가 직접 발행하지 않는다. B1 보드의 camera_streaming
+패키지(별도 컨테이너)가 http_video_server로 /camera/surface/image_raw,
+/camera/underwater/image_raw 토픽을 B1 자신의 8000번 포트에서 HTTP로 변환해 서빙하고,
+이 노드의 웹 대시보드(dashboard_html.py)는 camera_host 파라미터로 그 주소를 알아내
+<img> 태그로 그대로 표시한다.
 
 전류 센서 4개(추진기1/2, 펌프 제어부, 센서 보드)는 전부 B1 보드에 물려있어서
 usv_sensors의 current_sensor_node가 /battery/status 하나로 통합 발행한다. 예전에
@@ -58,6 +66,10 @@ class GuiMainNode(Node):
         super().__init__('gui_main_node')
 
         self.declare_parameter('http_port', 8000)
+        # 카메라 스트림은 GCS가 아니라 B1 보드 위 camera_streaming 패키지(http_video_server,
+        # 고정 포트 8000)가 직접 서빙한다. GCS는 B1의 IP를 알 방법이 없으므로 launch 인자로
+        # 받는다. 비워두면 dashboard_html.py가 GCS 자신의 호스트로 폴백한다(대부분 틀린 주소).
+        self.declare_parameter('camera_host', '')
 
         self.state_lock = threading.Lock()
         self.state = {
@@ -67,6 +79,9 @@ class GuiMainNode(Node):
             'battery_status': None,
             'cmd_vel': None,
             'pump_on': None,
+            'pump_state': None,
+            'led_state': None,
+            'auto_mode': None,
         }
 
         self.create_subscription(String, '/water_quality/data', self.on_water_quality, 10)
@@ -75,6 +90,9 @@ class GuiMainNode(Node):
         self.create_subscription(String, '/battery/status', self.on_battery_status, 10)
         self.create_subscription(Twist, '/cmd_vel', self.on_cmd_vel, 10)
         self.create_subscription(Bool, '/actuator/pump_cmd', self.on_pump_cmd, 10)
+        self.create_subscription(Bool, '/actuator/pump_state', self.on_pump_state, 10)
+        self.create_subscription(ColorRGBA, '/actuator/led_state', self.on_led_state, 10)
+        self.create_subscription(Bool, '/actuator/auto_mode', self.on_auto_mode, 10)
 
         self.led_pub = self.create_publisher(ColorRGBA, '/actuator/led_cmd', 10)
 
@@ -112,6 +130,18 @@ class GuiMainNode(Node):
         with self.state_lock:
             self.state['pump_on'] = msg.data
 
+    def on_pump_state(self, msg: Bool):
+        with self.state_lock:
+            self.state['pump_state'] = msg.data
+
+    def on_led_state(self, msg: ColorRGBA):
+        with self.state_lock:
+            self.state['led_state'] = {'r': msg.r, 'g': msg.g, 'b': msg.b}
+
+    def on_auto_mode(self, msg: Bool):
+        with self.state_lock:
+            self.state['auto_mode'] = msg.data
+
     def snapshot(self):
         with self.state_lock:
             return dict(self.state)
@@ -128,9 +158,12 @@ def create_app(node: GuiMainNode) -> Flask:
     web_dir = get_package_share_directory('usv_gcs') + '/web'
     app = Flask(__name__, static_folder=web_dir, static_url_path='')
 
+    camera_host = node.get_parameter('camera_host').value
+    rendered_index_html = INDEX_HTML.replace('__CAMERA_HOST__', camera_host)
+
     @app.get('/')
     def index():
-        return INDEX_HTML
+        return rendered_index_html
 
     @app.get('/api/state')
     def api_state():
