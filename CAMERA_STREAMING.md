@@ -29,17 +29,23 @@ underwater 카메라(USB)┘                          /camera/underwater/image_r
   Python 표준 `http.server`로 MJPEG(`multipart/x-mixed-replace`) 스트림을
   내보냅니다.
 - ROS 2 Jazzy는 UNO Q Linux 위 **별도의** Docker 컨테이너
-  (`camera_streaming_container`, 이미지 `camera_streaming_ws`)에서 실행됩니다.
-  다른 팀이 쓰는 수질/GPS 컨테이너(`ros_jazzy_container` / `ros_jazzy_ws`)와
+  (`camera_streaming_container`, 이미지 `camera_streaming_image`)에서 실행됩니다.
+  같은 B1 보드에서 도는 수질/GPS 컨테이너(`usv_sensors_container` / `usv_sensors_image`)와
   이름이 완전히 분리되어 있어 서로 절대 충돌하지 않습니다. `--network host`라서
   컨테이너 안에서 연 포트가 보드의 실제 포트로 바로 노출되고, 같은
   `ROS_DOMAIN_ID=0`을 쓰므로 두 컨테이너의 ROS 2 토픽은 호스트 네트워크
-  위에서 서로 정상적으로 보입니다(간섭 없이 공존).
+  위에서 서로 정상적으로 보입니다(간섭 없이 공존). B1 보드를 통째로 올릴 땐
+  레포 루트의 `start_b1.sh`가 이 컨테이너와 `usv_sensors` 컨테이너를 순서대로
+  띄운다 (README.md 3항 참고).
 
 ## 패키지 위치
 
 ```text
-ros_arduino_uno_Q/python/src/camera_streaming/
+6can_usv_ws/src/camera_streaming/
+├── Dockerfile
+├── requirements.txt            # opencv-python-headless, numpy
+├── start_camera_streaming.sh   # 이미지 빌드(최초 1회) → 컨테이너 실행
+├── install_autostart.sh        # (선택) 부팅 시 자동 실행 등록 (systemd/camera-streaming.service)
 ├── package.xml
 ├── setup.py / setup.cfg
 ├── camera_streaming/
@@ -94,25 +100,16 @@ ros_arduino_uno_Q/python/src/camera_streaming/
    ```bash
    v4l2-ctl --list-devices
    ```
-3. 기본값(`/dev/video2`, `/dev/video3`)과 다르면 컨테이너를 재시작하면서
-   launch 인자를 바꿔줍니다.
+3. 기본값(`/dev/video2`, `/dev/video3`)과 다르면 `start_camera_streaming.sh`가
+   실행하는 `ros2 launch` 줄에 인자를 추가하고 다시 실행합니다 (스크립트 자체는
+   그대로 두고, 그 안의 `ros2 launch camera_streaming camera_streaming.launch.py`
+   줄만 아래처럼 인자를 붙이면 됩니다):
    ```bash
-   docker rm -f camera_streaming_container
-
-   docker run -d \
-       --name camera_streaming_container \
-       --network host \
-       --restart unless-stopped \
-       -e ROS_DOMAIN_ID=0 \
-       -v /home/arduino/ArduinoApps/ros_arduino_uno_Q/python/src:/ros2_ws/src \
-       camera_streaming_ws \
-       bash -c '
-           source /opt/ros/jazzy/setup.bash
-           cd /ros2_ws && colcon build --symlink-install
-           source /ros2_ws/install/setup.bash
-           ros2 launch camera_streaming camera_streaming.launch.py \
-               surface_device:=/dev/videoX underwater_device:=/dev/videoY
-       '
+   cd 6can_usv_ws/src/camera_streaming
+   ./start_camera_streaming.sh
+   # 장치 번호가 다르면: 컨테이너 안에서
+   #   ros2 launch camera_streaming camera_streaming.launch.py \
+   #       surface_device:=/dev/videoX underwater_device:=/dev/videoY
    ```
 4. 정상 동작 확인:
    ```bash
@@ -122,11 +119,16 @@ ros_arduino_uno_Q/python/src/camera_streaming/
 
 ## 부팅 시 자동 실행
 
-`camera_streaming_container`는 `--restart unless-stopped`로 띄워져 있어서
-Docker 데몬이 부팅 시 시작되면(이미 그렇게 설정돼 있음) 이 컨테이너도 별도
-systemd 서비스 없이 자동으로 같이 올라옵니다. 컨테이너 이름/이미지 이름이
-다른 팀의 `ros_jazzy_container` / `ros_jazzy_ws`와 겹치지 않으므로 서로의
-자동 실행에 영향을 주지 않습니다.
+```bash
+cd 6can_usv_ws/src/camera_streaming
+./install_autostart.sh
+```
+
+`systemd/camera-streaming.service`를 설치해 부팅 시 `start_camera_streaming.sh`를
+자동 실행하도록 등록합니다 (컨테이너 자체도 `--restart unless-stopped`라 Docker
+데몬이 살아있는 한 다시 켜집니다). B1 보드의 다른 컨테이너(`usv_sensors_container`)와
+이름/이미지가 겹치지 않으므로 서로의 자동 실행에 영향을 주지 않습니다. 두 컨테이너를
+한 번에 등록하려면 레포 루트의 `install_b1_autostart.sh`를 쓰세요.
 
 ## 현재 알려진 상태 (이 문서 작성 시점)
 
