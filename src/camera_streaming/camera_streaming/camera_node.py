@@ -11,6 +11,8 @@ import time
 
 import cv2
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
@@ -29,9 +31,14 @@ class CameraPublisher:
         self.fps = fps
         self.retry_interval = 2.0
         self.next_open_at = 0.0
+        # cap.read() is a blocking V4L2 call. Give every camera its own
+        # callback group so one stalled device cannot block the other camera
+        # or the rest of the node.
+        self.callback_group = MutuallyExclusiveCallbackGroup()
         self._open()
         period = 1.0 / fps if fps > 0 else 0.1
-        node.create_timer(period, self._tick)
+        self.timer = node.create_timer(
+            period, self._tick, callback_group=self.callback_group)
 
     @staticmethod
     def _fourcc(value):
@@ -124,12 +131,16 @@ def main():
         CameraPublisher(node, 'underwater', underwater_device,
                          '/camera/underwater/image_raw', width, height, fps),
     ]
+    executor = MultiThreadedExecutor(num_threads=len(cameras) + 1)
+    executor.add_node(node)
 
     try:
-        rclpy.spin(node)
+        executor.spin()
     finally:
+        executor.shutdown(timeout_sec=2.0, wait_for_threads=False)
         for cam in cameras:
             cam.release()
+        executor.remove_node(node)
         node.destroy_node()
         rclpy.shutdown()
 
