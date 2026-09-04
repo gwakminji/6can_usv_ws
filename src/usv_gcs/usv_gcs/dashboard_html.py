@@ -131,7 +131,9 @@ function convertGpsToPixel(lat, lng) {
 let isGpsReceived = false;
 
 // --- [미니맵] 구글 정적맵 위성 사진 위에 실제 GPS 좌표를 표시 ---
-const googleApiKey = "AIzaSyAn7HQLTvwf2JIDEOtdJZfxXyEGBeAmTSg";
+// TODO: 구글 맵 Static API 키 채워넣기. 저장소가 public이라 여기 직접 커밋하지 말 것
+// (팀 키 사용 여부/도메인 제한 확인 후 배포 환경에서만 주입 권장).
+const googleApiKey = "";
 const miniMapImg = new Image();
 let currentLat = (gpsBounds.minLat + gpsBounds.maxLat) / 2;
 let currentLng = (gpsBounds.minLng + gpsBounds.maxLng) / 2;
