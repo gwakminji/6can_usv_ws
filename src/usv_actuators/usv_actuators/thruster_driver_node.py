@@ -1,23 +1,40 @@
-"""thruster_driver_node — usv_actuators 패키지 (B2 보드).
+#!/usr/bin/env python3
+"""thruster_driver_node — usv_actuators
 
-구독: /cmd_vel [geometry_msgs/msg/Twist] — watchdog_node가 이번 범위에서 제외되어
-      /cmd_vel_safe가 아니라 /cmd_vel을 직접 구독한다 (README.md 0항 참고).
-
-배터리 계측 역할은 이 노드에서 삭제되었다. 전류 센서 4개가 전부 B1 보드에 물려있어서
-usv_sensors의 current_sensor_node가 /battery/status로 통합 발행한다 (README.md 1항 참고).
-
-TODO(하드웨어 확정 필요): 실제 모터 드라이버 배선과 PWM 매핑이 아직 없어서 MCU RPC
-메서드 이름(set_thruster_pwm)은 임시로 정한 것이다. Arduino 스케치 쪽에 해당 RPC
-핸들러를 구현해야 실제로 동작한다.
+/cmd_vel [geometry_msgs/msg/Twist] 구독
+→ 좌/우 스러스터 명령 계산
+→ 1500us 기준 PWM으로 변환
+→ RouterBridge를 통해 Arduino MCU의 set_thruster_pwm 호출
 """
+
+import time
 
 import rclpy
 from rclpy.node import Node
-
 from geometry_msgs.msg import Twist
 
 from .bridge import Bridge
-from .telemetry import bounded_integer
+
+
+NEUTRAL_PWM = 1500
+
+# 처음 테스트할 때는 출력 범위를 작게 잡는 것이 안전함.
+# 최대 전진: 1700us
+# 최대 후진: 1300us
+MAX_DELTA = 200
+
+# 조이스틱 미세 노이즈 무시
+INPUT_DEADBAND = 0.05
+
+# /cmd_vel이 끊기면 중립으로 복귀
+CMD_TIMEOUT = 0.5
+
+# 같은 값을 계속 Bridge에 보내지 않도록 함
+SEND_INTERVAL = 0.05  # 최대 20Hz
+
+
+def clamp(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
 
 
 class ThrusterDriverNode(Node):
@@ -25,42 +42,175 @@ class ThrusterDriverNode(Node):
     def __init__(self):
         super().__init__('thruster_driver_node')
 
-        self.declare_parameter('max_pwm', 255)
+        self.cmd_sub = self.create_subscription(
+            Twist,
+            '/cmd_vel',
+            self.on_cmd_vel,
+            10
+        )
 
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.on_cmd_vel, 10)
+        self.target_left = NEUTRAL_PWM
+        self.target_right = NEUTRAL_PWM
 
-        self.get_logger().info('Thruster driver node started')
+        self.last_cmd_time = time.monotonic()
+        self.last_send_time = 0.0
+
+        self.last_sent_left = None
+        self.last_sent_right = None
+
+        self.timer = self.create_timer(
+            0.02,
+            self.control_loop
+        )
+
+        self.get_logger().info(
+            'Thruster driver node started '
+            '(1500us PWM / RouterBridge mode)'
+        )
 
     def on_cmd_vel(self, msg: Twist):
-        max_pwm = self.get_parameter('max_pwm').value
+        linear = clamp(msg.linear.x, -1.0, 1.0)
+        angular = clamp(msg.angular.z, -1.0, 1.0)
 
-        linear = max(-1.0, min(1.0, msg.linear.x))
-        angular = max(-1.0, min(1.0, msg.angular.z))
+        # 작은 입력은 0으로 처리
+        if abs(linear) < INPUT_DEADBAND:
+            linear = 0.0
 
+        if abs(angular) < INPUT_DEADBAND:
+            angular = 0.0
+
+        # Differential thrust mixing
+        #
+        # 전진:
+        # linear > 0
+        # left/right 모두 +
+        #
+        # 회전:
+        # angular > 0
+        # left 감소, right 증가
         left = linear - angular
         right = linear + angular
-        scale = max(1.0, abs(left), abs(right))
 
-        left_pwm = bounded_integer(round(left / scale * max_pwm), -max_pwm, max_pwm)
-        right_pwm = bounded_integer(round(right / scale * max_pwm), -max_pwm, max_pwm)
+        # 둘 중 하나가 ±1을 넘으면 비율 유지하며 정규화
+        scale = max(
+            1.0,
+            abs(left),
+            abs(right)
+        )
+
+        left /= scale
+        right /= scale
+
+        # -1.0 ~ +1.0
+        #       ↓
+        # 1300 ~ 1700us
+        left_pwm = int(round(
+            NEUTRAL_PWM + left * MAX_DELTA
+        ))
+
+        right_pwm = int(round(
+            NEUTRAL_PWM + right * MAX_DELTA
+        ))
+
+        self.target_left = clamp(
+            left_pwm,
+            NEUTRAL_PWM - MAX_DELTA,
+            NEUTRAL_PWM + MAX_DELTA
+        )
+
+        self.target_right = clamp(
+            right_pwm,
+            NEUTRAL_PWM - MAX_DELTA,
+            NEUTRAL_PWM + MAX_DELTA
+        )
+
+        self.last_cmd_time = time.monotonic()
+
+        self.get_logger().info(
+            f'cmd_vel '
+            f'linear={linear:.2f} '
+            f'angular={angular:.2f} '
+            f'-> L={self.target_left}us '
+            f'R={self.target_right}us'
+        )
+
+    def control_loop(self):
+        now = time.monotonic()
+
+        # /cmd_vel timeout
+        if now - self.last_cmd_time > CMD_TIMEOUT:
+            left = NEUTRAL_PWM
+            right = NEUTRAL_PWM
+        else:
+            left = self.target_left
+            right = self.target_right
+
+        # 너무 빠른 Bridge 호출 방지
+        if now - self.last_send_time < SEND_INTERVAL:
+            return
+
+        # 값이 안 바뀌었으면 다시 보내지 않음
+        if (
+            left == self.last_sent_left
+            and right == self.last_sent_right
+        ):
+            return
 
         try:
-            # TODO(B2 담당자): 'set_thruster_pwm'은 임시 RPC 이름. 실제 Arduino 스케치의
-            # 핸들러 이름/인자 순서(left, right)에 맞춰 확인·수정할 것.
-            Bridge.notify('set_thruster_pwm', left_pwm, right_pwm)
+            result = Bridge.call(
+                'set_thruster_pwm',
+                int(left),
+                int(right),
+                timeout=2
+            )
+
+            self.last_sent_left = left
+            self.last_sent_right = right
+            self.last_send_time = now
+
+            self.get_logger().info(
+                f'PWM sent -> '
+                f'L={left}us '
+                f'R={right}us'
+            )
+
         except Exception as error:
-            self.get_logger().warning(f'Thruster Bridge error: {error}')
+            self.get_logger().warning(
+                f'Thruster Bridge error: {error}'
+            )
+
+    def send_neutral(self):
+        try:
+            Bridge.call(
+                'set_thruster_pwm',
+                NEUTRAL_PWM,
+                NEUTRAL_PWM,
+                timeout=2
+            )
+
+            self.get_logger().info(
+                'Neutral command sent'
+            )
+
+        except Exception as error:
+            self.get_logger().warning(
+                f'Failed to send neutral: {error}'
+            )
 
 
 def main(args=None):
     rclpy.init(args=args)
+
     node = ThrusterDriverNode()
 
     try:
         rclpy.spin(node)
+
     except KeyboardInterrupt:
         pass
+
     finally:
+        node.send_neutral()
         node.destroy_node()
         rclpy.shutdown()
 
