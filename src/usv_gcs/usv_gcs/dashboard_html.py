@@ -20,7 +20,7 @@ INDEX_HTML = """<!doctype html>
       display: flex; justify-content: center; align-items: center; height: 100vh;
       font-family: '맑은 고딕', sans-serif; overflow: hidden;
   }
-  #gameContainer { position: relative; display: inline-block; }
+  #gameContainer { position: relative; display: inline-block; transform-origin: center center; }
   canvas { border: 3px solid #e29578; background-color: #2c1a11; box-shadow: 0 0 20px rgba(0,0,0,0.8); }
 
   #gpsBanner {
@@ -30,7 +30,7 @@ INDEX_HTML = """<!doctype html>
   }
 
   #cameraPanel {
-      position: absolute; top: 440px; left: 585px; width: 200px; height: 120px;
+      position: absolute; top: 480px; left: 585px; width: 200px; height: 120px;
       background-color: #1c100a; border: 2px solid #38bdf8; box-sizing: border-box;
       padding: 3px; display: flex; flex-direction: column; justify-content: space-between;
       z-index: 10;
@@ -46,7 +46,7 @@ INDEX_HTML = """<!doctype html>
   .cam-box img { width: 100%; height: 100%; object-fit: cover; }
 
   #actuatorPanel {
-      position: absolute; top: 10px; left: 585px; width: 200px; box-sizing: border-box;
+      position: absolute; top: 190px; left: 13px; width: 200px; box-sizing: border-box;
       background-color: #150d08; border: 2px solid #e29578; padding: 6px; font-size: 11px;
       z-index: 10;
   }
@@ -276,7 +276,10 @@ let fishCount = 4;
 let ownedSpecialFishes = { witch: 0, ghost: 0, santa: 0, pumpkin: 0 };
 let ghostGoldTimer = 0;
 
-const mapWidth = 1140;
+// 초광폭 화면에서 호수 뷰포트가 원래 맵 폭(1140)보다 넓어지면 배경 이미지가 다 못 채워서
+// 빈 공간이 생기므로, updateResponsiveCanvas()가 뷰포트 폭에 맞춰 이 값을 같이 늘려준다.
+// 최소값 1140은 기존 디자인 크기 - 좁은 화면에서는 그 아래로 줄어들지 않는다.
+let mapWidth = 1140;
 const mapHeight = 1200;
 
 // 디폴트 위치 설정 (GPS 수신 전에는 중앙에 위치)
@@ -295,18 +298,23 @@ let activeCardKey = null;
 let notificationText = "";
 let notificationTimer = null;
 
+// 뽑기 등급표: chance는 100 기준 당첨 확률(%) - 점수(score_val)가 높은 물고기일수록
+// 낮게 잡아서 좋은 물고기일수록 잘 안 나오게 한다. 4개 합은 100이어야 함.
 const specialFishTemplates = {
-    witch: { name: "WITCH FISH", kor_name: "마녀 피쉬", price: 90, score_val: 15, desc: "쓰레기 패널티 30% 완화 🎩" },
-    ghost: { name: "GHOST LOBSTER", kor_name: "유령 가재", price: 130, score_val: 25, desc: "10초마다 +15G 생산 👻" },
-    santa: { name: "SANTA GOLDFISH", kor_name: "산타 금붕어", price: 170, score_val: 35, desc: "적정 수질 시 점수 1.4배 🎅" },
-    pumpkin: { name: "PUMPKIN FISH", kor_name: "호박 왕관피쉬", price: 220, score_val: 50, desc: "초당 기본 점수 든든하게 +50점 👑" }
+    witch: { name: "WITCH FISH", kor_name: "마녀 피쉬", rarity: "일반", chance: 55, score_val: 15, desc: "쓰레기 패널티 30% 완화 🎩" },
+    ghost: { name: "GHOST LOBSTER", kor_name: "유령 가재", rarity: "희귀", chance: 28, score_val: 25, desc: "10초마다 +15G 생산 👻" },
+    santa: { name: "SANTA GOLDFISH", kor_name: "산타 금붕어", rarity: "영웅", chance: 13, score_val: 35, desc: "적정 수질 시 점수 1.4배 🎅" },
+    pumpkin: { name: "PUMPKIN FISH", kor_name: "호박 왕관피쉬", rarity: "전설", chance: 4, score_val: 50, desc: "초당 기본 점수 든든하게 +50점 👑" }
 };
+const GACHA_COST = 150;
 
 // 마우스 클릭 이벤트 처리
 canvas.addEventListener("click", (e) => {
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    // 화면 확대(fitGameContainer의 transform: scale)로 캔버스의 실제 렌더링 크기가
+    // 내부 해상도(800x600)와 달라지므로, 클릭 좌표를 내부 해상도 기준으로 환산한다.
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
 
     if (gameState === "main") {
         if (x >= 300 && x <= 500 && y >= 190 && y <= 260) {
@@ -321,11 +329,9 @@ canvas.addEventListener("click", (e) => {
             triggerEndingCheat();
             return;
         }
-        if (x >= 595 && x <= 775) {
-            if (y >= 292 && y <= 317) buySpecialFish("witch");
-            else if (y >= 325 && y <= 350) buySpecialFish("ghost");
-            else if (y >= 358 && y <= 383) buySpecialFish("santa");
-            else if (y >= 391 && y <= 416) buySpecialFish("pumpkin");
+        const sidebarX = canvas.width - 230;
+        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 290 && y <= 326) {
+            rollGachaFish();
         }
     } else if (gameState === "ending") {
         if (x >= 260 && x <= 540 && y >= 480 && y <= 540) {
@@ -405,18 +411,32 @@ function hideFishCardPopup() {
     activeCardShown = false;
 }
 
-function buySpecialFish(fishKey) {
-    let info = specialFishTemplates[fishKey];
-    if (gold >= info.price) {
-        gold -= info.price;
-        fishCount += 1;
-        ownedSpecialFishes[fishKey] += 1;
-        spawnSpecialFish(fishKey);
-        showInGameMessage(`🎉 ${info.kor_name} 영입 완료! (-${info.price}G)`);
-        showFishCardPopup(fishKey);
-    } else {
-        showInGameMessage(`❌ 골드가 부족합니다! (필요: ${info.price}G)`);
+// 조이스틱 버튼 하나로 실행되는 랜덤 뽑기. 4개 물고기 중 하나를 chance(%) 가중치로
+// 추첨한다 - 값이 좋은 물고기(pumpkin 등)일수록 chance가 낮게 설정되어 있어 잘 안 나온다.
+function rollGachaFish() {
+    if (activeCardShown) return; // 카드 팝업이 떠 있는 동안은 중복 뽑기 방지
+
+    if (gold < GACHA_COST) {
+        showInGameMessage(`❌ 골드가 부족합니다! (필요: ${GACHA_COST}G)`);
+        return;
     }
+    gold -= GACHA_COST;
+
+    const keys = Object.keys(specialFishTemplates);
+    const totalChance = keys.reduce((sum, k) => sum + specialFishTemplates[k].chance, 0);
+    let roll = Math.random() * totalChance;
+    let fishKey = keys[keys.length - 1];
+    for (const k of keys) {
+        if (roll < specialFishTemplates[k].chance) { fishKey = k; break; }
+        roll -= specialFishTemplates[k].chance;
+    }
+
+    let info = specialFishTemplates[fishKey];
+    fishCount += 1;
+    ownedSpecialFishes[fishKey] += 1;
+    spawnSpecialFish(fishKey);
+    showInGameMessage(`🎉 [${info.rarity}] ${info.kor_name} 획득! (-${GACHA_COST}G)`);
+    showFishCardPopup(fishKey);
 }
 
 function triggerEndingCheat() {
@@ -524,8 +544,59 @@ function batterySummaryText() {
     return parts.length ? `🔋 ${parts.join(' ')}` : "🔋 배터리: 데이터 없음";
 }
 
+// --- [화면 맞춤] 메인/엔딩 화면은 800x600 고정 그림이라 그대로 두고, 실제 조종 화면(game)만
+// 스크롤되는 넓은 맵을 더 보여주도록 캔버스 내부 가로 해상도를 창 크기에 맞춰 늘린다.
+// 세로(600) 기준 좌표 로직은 그대로 두고, #gameContainer를 그 비율로 확대해서 창을 꽉 채운다
+// (모니터 해상도와 무관하게, 매 프레임 창 크기를 확인해서 동작).
+function updateResponsiveCanvas() {
+    const fillScale = window.innerHeight / canvas.height;
+    const desiredWidth = (gameState === "game")
+        ? Math.max(800, Math.round(window.innerWidth / fillScale))
+        : 800;
+    if (canvas.width !== desiredWidth) {
+        canvas.width = desiredWidth;
+    }
+
+    const scale = Math.min(window.innerWidth / (canvas.width + 6), window.innerHeight / (canvas.height + 6));
+    document.getElementById('gameContainer').style.transform = `scale(${scale})`;
+
+    // 사이드바(HUD)는 항상 캔버스 우측 230px 폭 고정 - 캔버스가 넓어지면 그만큼 오른쪽으로 밀림.
+    // #cameraPanel은 DOM 오버레이라 캔버스 좌표와 별개로 위치를 직접 맞춰줘야 한다.
+    const sidebarX = canvas.width - 230;
+    document.getElementById('cameraPanel').style.left = (sidebarX + 15) + 'px';
+
+    // 호수(월드) 폭도 뷰포트(sidebarX)만큼 늘려서 배경 이미지가 빈틈없이 다 채우도록 한다.
+    mapWidth = Math.max(1140, sidebarX);
+}
+
+// --- [조이스틱 뽑기 버튼] 하드웨어 조이스틱 버튼이 물고기 4종을 개별로 고르기엔
+// 부족해서, 뽑기 자체를 버튼 하나에 배정한다. ROS의 /joy 토픽과는 별개로 브라우저가
+// 직접 인식하는 HTML5 Gamepad API(navigator.getGamepads)를 사용한다 - 이벤트가 아니라
+// 매 프레임 폴링해야 버튼 상태를 읽을 수 있는 API라서 mainLoop 안에서 호출한다. ---
+const GACHA_GAMEPAD_BUTTON_INDEX = 4; // 실제 조이스틱에서 남는 버튼 번호로 조정 (예: LB=4)
+let prevGachaButtonPressed = false;
+
+function pollGamepadForGacha() {
+    if (gameState !== "game" || activeCardShown) {
+        prevGachaButtonPressed = false;
+        return;
+    }
+
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = pads[0]; // 첫 번째로 연결된 조이스틱만 사용
+    const button = pad && pad.buttons[GACHA_GAMEPAD_BUTTON_INDEX];
+    const pressed = !!(button && button.pressed);
+
+    if (pressed && !prevGachaButtonPressed) {
+        rollGachaFish(); // 버튼을 누르는 순간(edge)에만 1회 실행 - 누르고 있어도 연속 실행 안 됨
+    }
+    prevGachaButtonPressed = pressed;
+}
+
 let animTimer = 0;
 function mainLoop() {
+    pollGamepadForGacha();
+    updateResponsiveCanvas();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (gameState === "main") {
@@ -573,7 +644,7 @@ function mainLoop() {
             if (activeCardShown) hideFishCardPopup();
 
             let dy = lastCmdVel.linearX > CMD_VEL_EPS ? -1 : (lastCmdVel.linearX < -CMD_VEL_EPS ? 1 : 0);
-            let dx = lastCmdVel.angularZ > CMD_VEL_EPS ? -1 : (lastCmdVel.angularZ < -CMD_VEL_EPS ? 1 : 0);
+            let dx = lastCmdVel.angularZ > CMD_VEL_EPS ? 1 : (lastCmdVel.angularZ < -CMD_VEL_EPS ? -1 : 0);
 
             boatAngle = Math.atan2(dy, dx);
 
@@ -595,9 +666,23 @@ function mainLoop() {
             } else if (dx < 0 && dy < 0) {
                 boatSpriteIndex = 14; // 좌상
             }
+
+            // GPS 미수신 시 dead-reckoning 폴백: 조이스틱 입력 방향으로 화면상 위치를 직접 이동
+            // (GPS가 들어오는 순간 refreshState()가 targetX/Y를 덮어써서 자연히 GPS 기준으로 전환됨)
+            if (!isGpsReceived) {
+                let speed = 3.5; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0에서 낮춤)
+                let len = Math.hypot(dx, dy);
+                targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
+                targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
+            }
         }
 
-        let cameraX = Math.max(0, Math.min(targetX - 285, mapWidth - 570));
+        // 사이드바(HUD)는 캔버스 우측 230px 고정, 나머지가 호수(플레이 뷰포트) 폭.
+        // 캔버스가 창 크기에 맞춰 넓어지면 호수도 그만큼 더 넓게 보인다 (updateResponsiveCanvas 참고).
+        const sidebarX = canvas.width - 230;
+        const lakeWidth = sidebarX;
+
+        let cameraX = Math.max(0, Math.min(targetX - lakeWidth / 2, mapWidth - lakeWidth));
         let cameraY = Math.max(0, Math.min(targetY - 300, mapHeight - 600));
 
         // 1. 배경(호수)
@@ -605,7 +690,7 @@ function mainLoop() {
             ctx.drawImage(assets.lake, -cameraX, -cameraY, mapWidth, mapHeight);
         } else {
             ctx.fillStyle = "#4078b4";
-            ctx.fillRect(0, 0, 570, 600);
+            ctx.fillRect(0, 0, lakeWidth, 600);
         }
 
         // 2. 물고기
@@ -617,7 +702,7 @@ function mainLoop() {
 
             let fx = fish.x - cameraX;
             let fy = fish.y - cameraY;
-            if (fx >= -30 && fx <= 600 && fy >= -30 && fy <= 630) {
+            if (fx >= -30 && fx <= lakeWidth + 30 && fy >= -30 && fy <= 630) {
                 if (assets.pixelFishes.complete && assets.pixelFishes.naturalWidth !== 0) {
                     let cols = 9;
                     let cellW = assets.pixelFishes.naturalWidth / cols;
@@ -641,7 +726,7 @@ function mainLoop() {
         monsters.forEach(m => {
             let mx = m.x - cameraX;
             let my = m.y - cameraY;
-            if (mx >= -30 && mx <= 600 && my >= -30 && my <= 630) {
+            if (mx >= -30 && mx <= lakeWidth + 30 && my >= -30 && my <= 630) {
                 if (m.photo.complete && m.photo.naturalWidth !== 0) {
                     ctx.drawImage(m.photo, mx - 14, my - 14, 28, 28);
                 } else {
@@ -719,10 +804,10 @@ function mainLoop() {
 
         // 6. 우측 UI 패널 영역
         ctx.fillStyle = "#2c1a11";
-        ctx.fillRect(570, 0, 230, 600);
+        ctx.fillRect(sidebarX, 0, 230, 600);
         ctx.strokeStyle = "#1c100a";
         ctx.lineWidth = 5;
-        ctx.strokeRect(570, 0, 230, 600);
+        ctx.strokeRect(sidebarX, 0, 230, 600);
 
         let mins = String(Math.floor(timeLeft / 60)).padStart(2, '0');
         let secs = String(timeLeft % 60).padStart(2, '0');
@@ -730,39 +815,39 @@ function mainLoop() {
         ctx.fillStyle = "#ff4757";
         ctx.font = "bold 14px 'Courier New'";
         ctx.textAlign = "center";
-        ctx.fillText(`⏱️ ${mins}:${secs}`, 685, 30);
+        ctx.fillText(`⏱️ ${mins}:${secs}`, sidebarX + 115, 30);
 
         ctx.fillStyle = "#2ed573";
         ctx.font = "bold 13px '맑은 고딕'";
-        ctx.fillText(`🏆 ${score} / ${targetScore}`, 685, 55);
+        ctx.fillText(`🏆 ${score} / ${targetScore}`, sidebarX + 115, 55);
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 13px '맑은 고딕'";
-        ctx.fillText(`💰 ${gold} G`, 685, 80);
+        ctx.fillText(`💰 ${gold} G`, sidebarX + 115, 80);
 
         // 💧 수질 센서 정보 패널 (실제 /water_quality/data 스키마: temp_c/ph/do_mg_l/
         // turbidity_voltage_v/clarity_pct/clarity_level 그대로 표시)
         ctx.fillStyle = "#1c100a";
         ctx.strokeStyle = "#ffd166";
         ctx.lineWidth = 2;
-        ctx.fillRect(585, 95, 200, 145);
-        ctx.strokeRect(585, 95, 200, 145);
+        ctx.fillRect(sidebarX + 15, 95, 200, 145);
+        ctx.strokeRect(sidebarX + 15, 95, 200, 145);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("[ USV 수질 센서 모니터링 ]", 685, 115);
+        ctx.fillText("[ USV 수질 센서 모니터링 ]", sidebarX + 115, 115);
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText(`등급: ${sensorWQ.clarity_level ?? '-'}`, 685, 138);
+        ctx.fillText(`등급: ${sensorWQ.clarity_level ?? '-'}`, sidebarX + 115, 138);
 
         ctx.font = "10px '맑은 고딕'";
         ctx.fillStyle = "#4cc9f0";
-        ctx.fillText(`✨ 맑기: ${sensorWQ.clarity_pct ?? '-'}%  (탁도 ${sensorWQ.turbidity_voltage_v ?? '-'}V)`, 685, 160);
+        ctx.fillText(`✨ 맑기: ${sensorWQ.clarity_pct ?? '-'}%  (탁도 ${sensorWQ.turbidity_voltage_v ?? '-'}V)`, sidebarX + 115, 160);
         ctx.fillStyle = "#38bdf8";
-        ctx.fillText(`🌡️ 수온: ${sensorWQ.temp_c ?? '-'} °C   pH ${sensorWQ.ph ?? '-'}`, 685, 180);
+        ctx.fillText(`🌡️ 수온: ${sensorWQ.temp_c ?? '-'} °C   pH ${sensorWQ.ph ?? '-'}`, sidebarX + 115, 180);
         ctx.fillStyle = "#2ed573";
-        ctx.fillText(`🫧 용존산소: ${sensorWQ.do_mg_l ?? '-'} mg/L`, 685, 200);
+        ctx.fillText(`🫧 용존산소: ${sensorWQ.do_mg_l ?? '-'} mg/L`, sidebarX + 115, 200);
 
         // 산타 물고기 효과(적정 수질 시 점수 배율)는 게임 자체 waterQuality 변수를 그대로 씀.
         // 이 게이지 바는 맑기(%)를 시각화만 하는 용도.
@@ -770,43 +855,53 @@ function mainLoop() {
         ctx.fillStyle = "#0f0906";
         ctx.strokeStyle = "#8b5a2b";
         ctx.lineWidth = 1;
-        ctx.fillRect(605, 212, 160, 12);
-        ctx.strokeRect(605, 212, 160, 12);
+        ctx.fillRect(sidebarX + 35, 212, 160, 12);
+        ctx.strokeRect(sidebarX + 35, 212, 160, 12);
 
         ctx.fillStyle = "#06d6a0";
-        ctx.fillRect(606, 213, intRange(158 * ratio), 10);
+        ctx.fillRect(sidebarX + 36, 213, intRange(158 * ratio), 10);
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "9px '맑은 고딕'";
-        ctx.fillText(batterySummaryText(), 685, 236);
+        ctx.fillText(batterySummaryText(), sidebarX + 115, 236);
 
-        // 상점 패널
+        // 뽑기 패널 (조이스틱 버튼 하나로 실행 가능한 단일 뽑기 버튼 + 등급표)
         ctx.fillStyle = "#150d08";
         ctx.strokeStyle = "#e29578";
         ctx.lineWidth = 2;
-        ctx.fillRect(585, 260, 200, 160);
-        ctx.strokeRect(585, 260, 200, 160);
+        ctx.fillRect(sidebarX + 15, 260, 200, 210);
+        ctx.strokeRect(sidebarX + 15, 260, 200, 210);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("✨ 특별 물고기 분양 상점 ✨", 685, 280);
+        ctx.fillText("🎰 랜덤 물고기 뽑기", sidebarX + 115, 280);
 
-        let shopItems = [
-            { text: "🎩 마녀 (90G) +15점/초", y: 292 },
-            { text: "👻 유령 (130G) +25점/초", y: 325 },
-            { text: "🎅 산타 (170G) +35점/초", y: 358 },
-            { text: "👑 호박 (220G) +50점/초", y: 391 }
-        ];
-        shopItems.forEach(item => {
-            ctx.fillStyle = "#3a2214";
-            ctx.strokeStyle = "#e29578";
-            ctx.lineWidth = 1;
-            ctx.fillRect(595, item.y, 180, 25);
-            ctx.strokeRect(595, item.y, 180, 25);
+        // 뽑기 버튼 - 마우스 클릭(클릭 핸들러 참고) 또는 조이스틱 버튼(pollGamepadForGacha)으로 실행
+        ctx.fillStyle = "#3a2214";
+        ctx.strokeStyle = "#ffd166";
+        ctx.lineWidth = 1;
+        ctx.fillRect(sidebarX + 25, 290, 180, 36);
+        ctx.strokeRect(sidebarX + 25, 290, 180, 36);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 12px '맑은 고딕'";
+        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) ✨`, sidebarX + 115, 312);
 
+        ctx.fillStyle = "#a5a5a5";
+        ctx.font = "9px '맑은 고딕'";
+        ctx.fillText("(조이스틱 버튼으로도 실행 가능)", sidebarX + 115, 340);
+
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 10px '맑은 고딕'";
+        ctx.fillText("[ 등급표 ]", sidebarX + 115, 358);
+
+        let rarityRows = ["witch", "ghost", "santa", "pumpkin"].map((key, i) => ({
+            key, y: 374 + i * 18
+        }));
+        ctx.font = "9px '맑은 고딕'";
+        rarityRows.forEach(row => {
+            let info = specialFishTemplates[row.key];
             ctx.fillStyle = "#ffffff";
-            ctx.font = "10px '맑은 고딕'";
-            ctx.fillText(item.text, 685, item.y + 17);
+            ctx.fillText(`${info.rarity} · ${info.kor_name} +${info.score_val}점/초 (${info.chance}%)`, sidebarX + 115, row.y);
         });
 
         // 7. 좌측 상단 미니맵
@@ -846,37 +941,39 @@ function mainLoop() {
         ctx.font = "bold 9px 'Courier New'";
         ctx.fillText(`X: ${Math.floor(targetX)}, Y: ${Math.floor(targetY)}`, 80, 162);
 
-        // 8. 알림 메시지
+        // 8. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
+        const lakeCenterX = lakeWidth / 2;
         if (notificationText !== "") {
             ctx.fillStyle = "#150d08";
             ctx.strokeStyle = "#4ade80";
             ctx.lineWidth = 2;
-            ctx.fillRect(60, 515, 450, 50);
-            ctx.strokeRect(60, 515, 450, 50);
+            ctx.fillRect(lakeCenterX - 225, 515, 450, 50);
+            ctx.strokeRect(lakeCenterX - 225, 515, 450, 50);
 
             ctx.fillStyle = "#ffffff";
             ctx.font = "bold 12px '맑은 고딕'";
-            ctx.fillText(notificationText, 285, 545);
+            ctx.fillText(notificationText, lakeCenterX, 545);
         }
 
         // 9. 특별 물고기 영입 카드 팝업
         if (activeCardShown && activeCardKey) {
             ctx.fillStyle = "rgba(0,0,0,0.5)";
-            ctx.fillRect(0, 0, 570, 600);
+            ctx.fillRect(0, 0, lakeWidth, 600);
 
+            const cardX = lakeCenterX - 110;
             ctx.fillStyle = "#110a05";
             ctx.strokeStyle = "#e29578";
             ctx.lineWidth = 3;
-            ctx.fillRect(175, 105, 220, 390);
-            ctx.strokeRect(175, 105, 220, 390);
+            ctx.fillRect(cardX, 105, 220, 390);
+            ctx.strokeRect(cardX, 105, 220, 390);
 
             ctx.fillStyle = "#ffd166";
             ctx.font = "bold 10px 'Courier New'";
-            ctx.fillText("★  XVII  ★", 285, 125);
+            ctx.fillText("★  XVII  ★", lakeCenterX, 125);
 
             ctx.fillStyle = "#ffffff";
             ctx.font = "bold 12px 'Courier New'";
-            ctx.fillText(specialFishTemplates[activeCardKey].name, 285, 150);
+            ctx.fillText(specialFishTemplates[activeCardKey].name, lakeCenterX, 150);
 
             if (assets.fourFish.complete && assets.fourFish.naturalWidth !== 0) {
                 let fw = assets.fourFish.naturalWidth;
@@ -889,23 +986,23 @@ function mainLoop() {
                     pumpkin: [midX, midY, midX, midY]
                 };
                 let b = boxes[activeCardKey];
-                ctx.drawImage(assets.fourFish, b[0], b[1], b[2], b[3], 205, 175, 160, 160);
+                ctx.drawImage(assets.fourFish, b[0], b[1], b[2], b[3], cardX + 30, 175, 160, 160);
             }
 
             ctx.fillStyle = "#a5a5a5";
             ctx.font = "bold 10px '맑은 고딕'";
-            ctx.fillText(specialFishTemplates[activeCardKey].desc, 285, 370);
+            ctx.fillText(specialFishTemplates[activeCardKey].desc, lakeCenterX, 370);
 
             ctx.strokeStyle = "#e29578";
             ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.moveTo(205, 415);
-            ctx.lineTo(365, 415);
+            ctx.moveTo(cardX + 30, 415);
+            ctx.lineTo(cardX + 190, 415);
             ctx.stroke();
 
             ctx.fillStyle = "#f43f5e";
             ctx.font = "italic 9px '맑은 고딕'";
-            ctx.fillText("- 1.5초 후 자동 닫힘 -", 285, 445);
+            ctx.fillText("- 1.5초 후 자동 닫힘 -", lakeCenterX, 445);
         }
 
         ctx.textAlign = "left";
