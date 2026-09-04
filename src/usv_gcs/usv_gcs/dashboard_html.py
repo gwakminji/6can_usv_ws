@@ -1,8 +1,7 @@
 """gui_main_node의 웹 대시보드 HTML/JS.
 
 Dongwon님이 만든 캔버스 게임 스타일 GUI(usv_gui 레포)를 이 프로젝트의 인터페이스 계약에 맞게
-이식한 버전이다. 원본은 roslibjs로 rosbridge_websocket에 직접 붙는 구조였지만, 이 프로젝트의
-gui_main_node.py는 Flask + HTTP 폴링(`/api/state`) 구조라서 데이터를 가져오는 부분만
+이식한 버전이다. 원본은 roslibjs로 rosbridge_websocket에 직접 붙는 구조라서 데이터 가져오는 부분만
 전부 폴링 방식으로 바꿨다 (게임 로직 자체는 그대로).
 
 이미지 에셋(배/물고기/쓰레기 스프라이트 등)은 gui_main_node.py가 web/ 디렉터리를
@@ -44,6 +43,7 @@ INDEX_HTML = """<!doctype html>
       background: rgba(0, 0, 0, 0.7); padding: 1px 3px; border-radius: 2px; z-index: 2;
   }
   .cam-box img { width: 100%; height: 100%; object-fit: cover; }
+  .cam-warn { font-size: 8px; color: #fdd; text-align: center; padding: 0 4px; }
 
   #actuatorPanel {
       position: absolute; top: 190px; left: 13px; width: 200px; box-sizing: border-box;
@@ -85,16 +85,26 @@ INDEX_HTML = """<!doctype html>
 
 <script>
 // --- [카메라 스트림] B1 보드의 camera_streaming 패키지(http_video_server)가 MJPEG를
-// 직접 서빙한다 - GCS 자신이 아니라 B1 보드 위에서 도는 서버라 GCS의 location.hostname을
-// 쓰면 안 된다. 포트는 camera_streaming 쪽 고정값(8000). 호스트는 gui_main_node.py의
-// camera_host 파라미터(gcs.launch.py camera_host 인자)로 주입 - 안 넘기면 GCS 자신의
-// 호스트로 폴백하는데, 대부분의 경우 잘못된 주소이니 반드시 launch 인자로 B1 IP를 넘길 것.
+// 직접 서빙한다 - GCS 자신이 아니라 B1 보드 위에서 도는 서버라 GCS의 location.hostname으로
+// 폴백하면 안 된다(폴백하면 GCS 자신의 8000번을 찍어서 조용히 검은 화면이 된다). 포트는
+// camera_streaming 쪽 고정값(8000). 호스트는 gui_main_node.py의 camera_host 파라미터
+// (gcs.launch.py camera_host 인자 또는 config/gcs_params.yaml)로 주입된다. 값이 비어있으면
+// 폴백 없이 화면에 설정 안내를 띄운다 - 잘못된 주소로 붙는 것보다 낫다.
 const CAMERA_PORT = 8000;
-const cameraHost = "__CAMERA_HOST__" || location.hostname;
-document.getElementById('surfaceCam').src =
-    `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/surface/image_raw`;
-document.getElementById('underwaterCam').src =
-    `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/underwater/image_raw`;
+const cameraHost = "__CAMERA_HOST__";
+if (cameraHost) {
+    document.getElementById('surfaceCam').src =
+        `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/surface/image_raw`;
+    document.getElementById('underwaterCam').src =
+        `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/underwater/image_raw`;
+} else {
+    document.querySelectorAll('#cameraPanel .cam-box').forEach((box) => {
+        const warn = document.createElement('div');
+        warn.className = 'cam-warn';
+        warn.textContent = 'camera_host 미설정 (gcs_params.yaml)';
+        box.appendChild(warn);
+    });
+}
 
 // --- [펌프] 조종은 조이스틱 하나로만 하므로 펌프도 joy_to_cmd_node가 조이스틱 버튼으로
 // 직접 /actuator/pump_cmd를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
@@ -229,7 +239,7 @@ refreshState();
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// 📂 이미지 자원 관리 객체
+// 📂 이미지 자원 관리 객체 (오로라 green, yellow, red 추가)
 const assets = {
     lake: new Image(),
     ending: new Image(),
@@ -242,7 +252,10 @@ const assets = {
     garbageSmall1: new Image(),
     garbageSmall2: new Image(),
     garbageSmall3: new Image(),
-    waterArrow: new Image()
+    waterArrow: new Image(),
+    green: new Image(),
+    yellow: new Image(),
+    red: new Image()
 };
 
 // 이미지 파일명 매칭 설정
@@ -258,6 +271,9 @@ assets.garbageSmall1.src = "garbage bag small 1.png";
 assets.garbageSmall2.src = "garbage bag small 2.png";
 assets.garbageSmall3.src = "garbage bag small 3.png";
 assets.waterArrow.src = "Water Arrow Preview.gif";
+assets.green.src = "green.png";
+assets.yellow.src = "yellow.png";
+assets.red.src = "red.png";
 
 // 게임 상태 관리 ("main" 또는 "game" 또는 "ending")
 let gameState = "main";
@@ -488,7 +504,7 @@ setInterval(() => {
 
     if (timeLeft <= 0) {
         isGameOver = true;
-        alert(`TIME OVER ⏳\\n최종 점수: ${score}점`);
+        alert(`TIME OVER ⏳\n최종 점수: ${score}점`);
         gameState = "main";
         return;
     }
@@ -789,9 +805,50 @@ function mainLoop() {
             ctx.restore();
         }
 
-        // 5. 보트 스프라이트 출력
+        // 5. 보트 스프라이트 출력 및 오로라 배경 투명화 적용 (1번 코드와 동일)
         let screenBoatX = targetX - cameraX;
         let screenBoatY = targetY - cameraY;
+
+            let currentAuraImg = assets.green;
+        if (waterQuality < 40) {
+            currentAuraImg = assets.red;
+        } else if (waterQuality < 70) {
+            currentAuraImg = assets.yellow;
+        }
+
+        if (currentAuraImg.complete && currentAuraImg.naturalWidth !== 0) {
+            let tempAuraCanvas = document.createElement('canvas');
+            tempAuraCanvas.width = currentAuraImg.naturalWidth;
+            tempAuraCanvas.height = currentAuraImg.naturalHeight;
+            let tAuraCtx = tempAuraCanvas.getContext('2d');
+
+            tAuraCtx.drawImage(currentAuraImg, 0, 0);
+
+            try {
+                let imgData = tAuraCtx.getImageData(0, 0, tempAuraCanvas.width, tempAuraCanvas.height);
+                let data = imgData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                    let r = data[i], g = data[i+1], b = data[i+2];
+
+                    // 오로라 본연의 색상은 보호하고, 순수한 흰색 배경(250 이상)만 투명하게 제거
+                    if (r > 250 && g > 250 && b > 250) {
+                        data[i+3] = 0;
+                    }
+                }
+                tAuraCtx.putImageData(imgData, 0, 0);
+
+                ctx.save();
+                ctx.globalAlpha = 0.9; 
+                let auraSize = 95;
+                ctx.drawImage(tempAuraCanvas, screenBoatX - auraSize / 2, screenBoatY - auraSize / 2, auraSize, auraSize);
+                ctx.restore();
+            } catch (err) {
+                ctx.save();
+                ctx.globalAlpha = 0.9;
+                ctx.drawImage(currentAuraImg, screenBoatX - 47, screenBoatY - 47, 95, 95);
+                ctx.restore();
+            }
+        }
 
         if (assets.ship.complete && assets.ship.naturalWidth !== 0) {
             let sw = assets.ship.naturalWidth;
@@ -912,7 +969,7 @@ function mainLoop() {
 
         ctx.fillStyle = "#a5a5a5";
         ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 X 버튼으로도 실행 가능)", sidebarX + 115, 340);
+        ctx.fillText("(조이스틱 Y 버튼으로도 실행 가능)", sidebarX + 115, 340);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 10px '맑은 고딕'";

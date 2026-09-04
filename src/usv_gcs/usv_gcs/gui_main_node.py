@@ -160,21 +160,43 @@ class GuiMainNode(Node):
         self.led_pub.publish(msg)
 
 
-def _camera_host_from_config() -> str:
+def _config_paths() -> list:
+    """gcs_params.yaml을 찾을 후보 경로들 (install 우선, 없으면 소스 트리).
+
+    install 쪽을 먼저 보되, config/가 설치되기 전에 빌드된 install 디렉터리가 남아있으면
+    (실제로 그랬다) 소스 트리의 config/gcs_params.yaml을 그대로 읽는다. 안 그러면 값을
+    적어놨는데도 조용히 빈 문자열이 돼서 카메라가 GCS 자신을 가리키게 된다.
+    """
+    paths = []
+    try:
+        paths.append(
+            os.path.join(get_package_share_directory('usv_gcs'), 'config', 'gcs_params.yaml')
+        )
+    except Exception:
+        pass
+    # .../src/usv_gcs/usv_gcs/gui_main_node.py -> .../src/usv_gcs/config/gcs_params.yaml
+    src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    paths.append(os.path.join(src_dir, 'config', 'gcs_params.yaml'))
+    return paths
+
+
+def _camera_host_from_config(node: GuiMainNode) -> str:
     """config/gcs_params.yaml의 camera_host 값을 읽는다 (launch 인자를 안 넘겼을 때 폴백).
 
     B1 IP가 자주 안 바뀌면 launch 인자로 매번 넘기는 대신 이 파일에 한 번만 적어두는 게
-    편하다. 파일이 없거나 값이 비어있으면 조용히 빈 문자열을 돌려준다.
+    편하다. 어느 파일을 읽었는지 로그로 남긴다 - 조용히 실패하면 원인을 찾기 어렵다.
     """
-    config_path = os.path.join(
-        get_package_share_directory('usv_gcs'), 'config', 'gcs_params.yaml'
-    )
-    try:
-        with open(config_path) as f:
-            data = yaml.safe_load(f) or {}
-        return str(data.get('camera_host') or '')
-    except (OSError, yaml.YAMLError):
-        return ''
+    for config_path in _config_paths():
+        try:
+            with open(config_path) as f:
+                data = yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError):
+            continue
+        host = str(data.get('camera_host') or '')
+        if host:
+            node.get_logger().info(f'camera_host={host} ({config_path})')
+            return host
+    return ''
 
 
 def create_app(node: GuiMainNode) -> Flask:
@@ -184,7 +206,17 @@ def create_app(node: GuiMainNode) -> Flask:
     app = Flask(__name__, static_folder=web_dir, static_url_path='')
 
     # launch 인자가 우선, 안 넘겼으면(빈 문자열) gcs_params.yaml을 대신 읽는다.
-    camera_host = node.get_parameter('camera_host').value or _camera_host_from_config()
+    camera_host = str(node.get_parameter('camera_host').value or '').strip()
+    if camera_host:
+        node.get_logger().info(f'camera_host={camera_host} (launch 인자)')
+    else:
+        camera_host = _camera_host_from_config(node)
+    if not camera_host:
+        node.get_logger().error(
+            'camera_host가 비어있다 - 카메라 스트림 주소를 만들 수 없다. '
+            'config/gcs_params.yaml에 B1 보드 IP를 적거나 '
+            'ros2 launch usv_gcs gcs.launch.py camera_host:=<B1_IP> 로 넘길 것.'
+        )
     rendered_index_html = INDEX_HTML.replace('__CAMERA_HOST__', camera_host)
 
     @app.get('/')
