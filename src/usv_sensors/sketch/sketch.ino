@@ -2,6 +2,7 @@
 #include <Arduino_RouterBridge.h>
 #include <OneWire.h>
 #include <math.h>
+#include "adc_accumulator.h"
 
 #define TEMP_PIN 4
 #define PH_PIN A1
@@ -334,13 +335,6 @@ float readTemperatureResult()
   return raw / 16.0;
 }
 
-
-struct AdcAccumulator
-{
-  uint32_t sum = 0;
-  int minValue = 4095;
-  int maxValue = 0;
-};
 
 
 void addAdcSample(
