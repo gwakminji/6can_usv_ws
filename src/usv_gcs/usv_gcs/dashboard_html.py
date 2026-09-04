@@ -570,10 +570,10 @@ function updateResponsiveCanvas() {
 }
 
 // --- [조이스틱 뽑기 버튼] 하드웨어 조이스틱 버튼이 물고기 4종을 개별로 고르기엔
-// 부족해서, 뽑기 자체를 버튼 하나에 배정한다. ROS의 /joy 토픽과는 별개로 브라우저가
+// 부족해서, 뽑기 자체를 버튼 하나(X)에 배정한다. ROS의 /joy 토픽과는 별개로 브라우저가
 // 직접 인식하는 HTML5 Gamepad API(navigator.getGamepads)를 사용한다 - 이벤트가 아니라
 // 매 프레임 폴링해야 버튼 상태를 읽을 수 있는 API라서 mainLoop 안에서 호출한다. ---
-const GACHA_GAMEPAD_BUTTON_INDEX = 4; // 실제 조이스틱에서 남는 버튼 번호로 조정 (예: LB=4)
+const GACHA_GAMEPAD_BUTTON_INDEX = 3; // X 버튼 (실측 확인 완료)
 let prevGachaButtonPressed = false;
 
 function pollGamepadForGacha() {
@@ -593,9 +593,33 @@ function pollGamepadForGacha() {
     prevGachaButtonPressed = pressed;
 }
 
+// --- [조이스틱 게임 시작 버튼] 메인 화면에서 마우스로 "게임 화면 시작"을 누르는 대신
+// 조이스틱의 Start 버튼으로 시작할 수 있게 한다. 버튼 인덱스 9번 = 실제 조이스틱으로
+// 실측 확인 완료 (Start 버튼). ---
+const START_GAMEPAD_BUTTON_INDEX = 9; // 실측 확인 완료
+let prevStartButtonPressed = false;
+
+function pollGamepadForStart() {
+    if (gameState !== "main") {
+        prevStartButtonPressed = false;
+        return;
+    }
+
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = pads[0];
+    const button = pad && pad.buttons[START_GAMEPAD_BUTTON_INDEX];
+    const pressed = !!(button && button.pressed);
+
+    if (pressed && !prevStartButtonPressed) {
+        startGame(); // 누르는 순간(edge)에만 1회 실행
+    }
+    prevStartButtonPressed = pressed;
+}
+
 let animTimer = 0;
 function mainLoop() {
     pollGamepadForGacha();
+    pollGamepadForStart();
     updateResponsiveCanvas();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -888,7 +912,7 @@ function mainLoop() {
 
         ctx.fillStyle = "#a5a5a5";
         ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 버튼으로도 실행 가능)", sidebarX + 115, 340);
+        ctx.fillText("(조이스틱 X 버튼으로도 실행 가능)", sidebarX + 115, 340);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 10px '맑은 고딕'";
