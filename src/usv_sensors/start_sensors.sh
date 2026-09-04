@@ -30,7 +30,10 @@ if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
 fi
 
 echo "[1] Starting Arduino App (water_quality + GPS sketch)..."
-arduino-app-cli app start user:usv_sensors
+# "restart" (not "start") so this script stays idempotent: "start" errors
+# out with "App Is Running" if a previous run of this same script left the
+# app running (e.g. re-running to pick up a sketch/python change).
+arduino-app-cli app restart user:usv_sensors
 
 echo "[2] Waiting for Arduino Router..."
 for i in $(seq 1 30); do
