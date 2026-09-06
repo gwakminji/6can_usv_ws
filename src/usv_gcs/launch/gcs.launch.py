@@ -73,7 +73,8 @@ def generate_launch_description():
             package='usv_gcs', executable='gui_main_node', name='gui_main_node',
             parameters=[{
                 'http_port': ParameterValue(LaunchConfiguration('http_port'), value_type=int),
-                'camera_host': LaunchConfiguration('camera_host'),
+                # value_type=str: "10.96.94.188" 같은 값이 숫자로 추론되지 않도록 고정
+                'camera_host': ParameterValue(LaunchConfiguration('camera_host'), value_type=str),
             }],
         ),
     ])

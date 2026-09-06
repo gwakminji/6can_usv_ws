@@ -3,4 +3,4 @@
 # 따로 넘기면 그쪽이 이 파일보다 우선한다.
 #
 # camera_host: B1 보드의 IP. B1 보드에서 `hostname -I` 실행해서 확인 (README.md 3항 참고).
-camera_host: ""
+camera_host: "10.96.94.188"
