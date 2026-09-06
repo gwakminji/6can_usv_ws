@@ -12,13 +12,28 @@ IMAGE_NAME="usv_sensors_image"
 
 cd "$PROJECT_DIR"
 
+# arduino-app-cli only finds an App by looking for a folder with its name
+# under ~/ArduinoApps/. A fresh clone of this repo doesn't live there, so
+# register it with a symlink the first time this script runs (idempotent —
+# this is what makes a clean clone + install_autostart.sh work after a
+# reboot with no manual setup).
+APP_LINK="$HOME/ArduinoApps/usv_sensors"
+if [ ! -e "$APP_LINK" ]; then
+    echo "[*] Registering usv_sensors with App Lab (~/ArduinoApps)..."
+    mkdir -p "$HOME/ArduinoApps"
+    ln -s "$PROJECT_DIR" "$APP_LINK"
+fi
+
 if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     echo "[0] Docker image missing; building it..."
     docker build -t "$IMAGE_NAME" "$PROJECT_DIR"
 fi
 
 echo "[1] Starting Arduino App (water_quality + GPS sketch)..."
-arduino-app-cli app start user:usv_sensors
+# "restart" (not "start") so this script stays idempotent: "start" errors
+# out with "App Is Running" if a previous run of this same script left the
+# app running (e.g. re-running to pick up a sketch/python change).
+arduino-app-cli app restart user:usv_sensors
 
 echo "[2] Waiting for Arduino Router..."
 for i in $(seq 1 30); do
@@ -59,6 +74,10 @@ docker run -d \
         cd /ros2_ws
         colcon build --symlink-install --packages-select usv_sensors
         source /ros2_ws/install/setup.bash
+        export ROS_DOMAIN_ID=0
+        export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+        unset ROS_STATIC_PEERS
+        unset ROS_LOCALHOST_ONLY
         ros2 launch usv_sensors sensors.launch.py
     '
 

@@ -1,8 +1,7 @@
 """gui_main_node의 웹 대시보드 HTML/JS.
 
 Dongwon님이 만든 캔버스 게임 스타일 GUI(usv_gui 레포)를 이 프로젝트의 인터페이스 계약에 맞게
-이식한 버전이다. 원본은 roslibjs로 rosbridge_websocket에 직접 붙는 구조였지만, 이 프로젝트의
-gui_main_node.py는 Flask + HTTP 폴링(`/api/state`) 구조라서 데이터를 가져오는 부분만
+이식한 버전이다. 원본은 roslibjs로 rosbridge_websocket에 직접 붙는 구조라서 데이터 가져오는 부분만
 전부 폴링 방식으로 바꿨다 (게임 로직 자체는 그대로).
 
 이미지 에셋(배/물고기/쓰레기 스프라이트 등)은 gui_main_node.py가 web/ 디렉터리를
@@ -30,33 +29,68 @@ INDEX_HTML = """<!doctype html>
   }
 
   #cameraPanel {
-      position: absolute; top: 480px; left: 585px; width: 200px; height: 120px;
+      /* 왼쪽 열(미니맵)과 가로폭을 맞추고, 그 아래 남는 공간을 캔버스
+         하단(600px)까지 꽉 채운다. 펌프제어 패널은 우측 사이드바로 옮겨서 이 열엔
+         미니맵만 남았다. */
+      position: absolute; top: 185px; left: 18px; width: 130px; height: 415px;
       background-color: #1c100a; border: 2px solid #38bdf8; box-sizing: border-box;
-      padding: 3px; display: flex; flex-direction: column; justify-content: space-between;
+      padding: 3px; display: flex; flex-direction: column; gap: 6px;
       z-index: 10;
   }
   .cam-box {
-      width: 100%; height: 54px; background-color: #000; border: 1px solid #38bdf8;
+      width: 100%; flex: 1; min-height: 0; background-color: #000; border: 1px solid #38bdf8;
       position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center;
   }
   .cam-title {
-      position: absolute; top: 2px; left: 4px; font-size: 8px; color: #38bdf8; font-weight: bold;
+      position: absolute; top: 2px; left: 4px; font-size: 10px; color: #38bdf8; font-weight: bold;
       background: rgba(0, 0, 0, 0.7); padding: 1px 3px; border-radius: 2px; z-index: 2;
   }
   .cam-box img { width: 100%; height: 100%; object-fit: cover; }
+  .cam-warn { font-size: 9px; color: #fdd; text-align: center; padding: 0 4px; }
 
   #actuatorPanel {
-      position: absolute; top: 190px; left: 13px; width: 200px; box-sizing: border-box;
+      /* 우측 사이드바(수질 센서 모니터링 패널 바로 아래, 뽑기 패널 바로 위)에 들어간다.
+         그 두 패널과 가로폭(200px)을 맞추고, sidebarX를 따라가야 해서 left는
+         updateResponsiveCanvas()가 매 프레임 갱신한다. */
+      position: absolute; top: 248px; left: 585px; width: 200px; box-sizing: border-box;
       background-color: #150d08; border: 2px solid #e29578; padding: 6px; font-size: 11px;
       z-index: 10;
   }
-  #actuatorPanel .title { color: #ffd166; font-weight: bold; margin-bottom: 4px; }
+  #actuatorPanel .title {
+      display: inline-block; vertical-align: middle;
+      color: #ffd166; font-weight: bold; margin-bottom: 4px;
+  }
+  .gamepad-btn-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 15px; height: 15px; border-radius: 50%; background: #e6423f;
+      color: #fff; font-size: 9px; font-weight: bold; font-family: Arial, sans-serif;
+      vertical-align: middle; margin-right: 5px; box-shadow: inset 0 0 2px rgba(0,0,0,0.5);
+  }
+  .gamepad-btn-badge.badge-green { background: #3ddc55; }
+  .pump-fire-hint {
+      display: flex; align-items: center; gap: 5px;
+      margin-top: 6px; font-size: 11px; font-weight: bold; color: #ffd166;
+  }
+  .pump-fire-hint .gamepad-btn-badge { margin-right: 0; }
   #actuatorPanel button {
       background: #246; color: #fff; border: none; border-radius: 4px; padding: 4px 8px;
       cursor: pointer; margin-right: 4px; font-size: 10px;
   }
   #actuatorPanel button:hover { background: #357; }
   #actuatorPanel input[type=color] { width: 32px; height: 22px; vertical-align: middle; }
+  .pump-mode-bar { display: flex; gap: 4px; margin-bottom: 6px; }
+  .pump-mode-box {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+      background: #1c100a; border: 1px solid #444; border-radius: 4px; padding: 5px 0;
+  }
+  .pump-mode-light {
+      width: 10px; height: 10px; border-radius: 50%; background: #555;
+      box-shadow: inset 0 0 2px rgba(0,0,0,0.8);
+  }
+  .pump-mode-box.on .pump-mode-light { background: #3ddc55; box-shadow: 0 0 6px 2px rgba(61,220,85,0.8); }
+  .pump-mode-label { font-size: 9px; color: #ccc; }
+
+  .panel-hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -64,7 +98,7 @@ INDEX_HTML = """<!doctype html>
     <div id="gpsBanner">⚠ GPS 신호 없음 (마지막 위치 유지 중)</div>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
-    <div id="cameraPanel">
+    <div id="cameraPanel" class="panel-hidden">
         <div class="cam-box">
             <span class="cam-title">📷 수면 (Surface)</span>
             <img id="surfaceCam" alt="수면 카메라 연결 중..." onerror="this.style.opacity=0.3">
@@ -75,47 +109,59 @@ INDEX_HTML = """<!doctype html>
         </div>
     </div>
 
-    <div id="actuatorPanel">
-        <div class="title">펌프 상태 / LED 제어</div>
-        <div>펌프(조이스틱 버튼): <span id="pumpStatus">-</span> / 실제: <span id="pumpStateActual">-</span></div>
-        <div style="margin-top:6px">LED: <input type="color" id="ledColor" value="#00ff00" onchange="setLed()"> 실제: <span id="ledStateActual">-</span></div>
-        <div style="margin-top:6px">자동 제어(조이스틱 버튼): <span id="autoModeStatus">-</span></div>
+    <div id="actuatorPanel" class="panel-hidden">
+        <span class="gamepad-btn-badge">B</span><div class="title">펌프 제어</div>
+        <div class="pump-mode-bar">
+            <div class="pump-mode-box" id="pumpModeAutoBox">
+                <span class="pump-mode-light"></span>
+                <span class="pump-mode-label">자동</span>
+            </div>
+            <div class="pump-mode-box" id="pumpModeManualBox">
+                <span class="pump-mode-light"></span>
+                <span class="pump-mode-label">수동</span>
+            </div>
+        </div>
+        <div class="pump-fire-hint"><span class="gamepad-btn-badge badge-green">A</span>펌프 작동</div>
     </div>
 </div>
 
 <script>
-// --- [카메라 스트림] web_video_server가 변환한 MJPEG를 <img>로 그대로 표시 ---
-const WEB_VIDEO_PORT = 8080;  // web_video_server 기본 포트, 다르게 실행했다면 여기만 바꾸면 됨
-document.getElementById('surfaceCam').src =
-    `http://${location.hostname}:${WEB_VIDEO_PORT}/stream?topic=/camera/surface/image_raw`;
-document.getElementById('underwaterCam').src =
-    `http://${location.hostname}:${WEB_VIDEO_PORT}/stream?topic=/camera/underwater/image_raw`;
+// --- [카메라 스트림] B1 보드의 camera_streaming 패키지(http_video_server)가 MJPEG를
+// 직접 서빙한다 - GCS 자신이 아니라 B1 보드 위에서 도는 서버라 GCS의 location.hostname으로
+// 폴백하면 안 된다(폴백하면 GCS 자신의 8000번을 찍어서 조용히 검은 화면이 된다). 포트는
+// camera_streaming 쪽 고정값(8000). 호스트는 gui_main_node.py의 camera_host 파라미터
+// (gcs.launch.py camera_host 인자 또는 config/gcs_params.yaml)로 주입된다. 값이 비어있으면
+// 폴백 없이 화면에 설정 안내를 띄운다 - 잘못된 주소로 붙는 것보다 낫다.
+const CAMERA_PORT = 8000;
+const cameraHost = "__CAMERA_HOST__";
+if (cameraHost) {
+    document.getElementById('surfaceCam').src =
+        `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/surface/image_raw`;
+    document.getElementById('underwaterCam').src =
+        `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/underwater/image_raw`;
+} else {
+    document.querySelectorAll('#cameraPanel .cam-box').forEach((box) => {
+        const warn = document.createElement('div');
+        warn.className = 'cam-warn';
+        warn.textContent = 'camera_host 미설정 (gcs_params.yaml)';
+        box.appendChild(warn);
+    });
+}
 
 // --- [펌프] 조종은 조이스틱 하나로만 하므로 펌프도 joy_to_cmd_node가 조이스틱 버튼으로
 // 직접 /actuator/pump_cmd를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
-
-// --- [LED] 아직 조이스틱에 버튼을 안 배정해서 여기 색상 피커로 /api/led에 POST ---
-function setLed() {
-    const hex = document.getElementById('ledColor').value;
-    const r = parseInt(hex.slice(1, 3), 16) / 255;
-    const g = parseInt(hex.slice(3, 5), 16) / 255;
-    const b = parseInt(hex.slice(5, 7), 16) / 255;
-    fetch('/api/led', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({r, g, b})
-    });
-}
 
 // --- [자동 제어] 펌프와 마찬가지로 joy_to_cmd_node가 조이스틱 버튼으로 직접
 // /actuator/auto_mode를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
 
 // --- [GPS] 위경도를 캔버스 픽셀 좌표로 변환 ---
-// 📍 송도 테스트 구역 가상 위경도 범위 설정
+// 📍 송도 센트럴파크 기준 위경도 범위 설정 - GPS 수신 전 기본 위치(및 미니맵)가
+// 실제로 존재하는 장소를 가리키도록 여기 좌표로 잡았다.
 const gpsBounds = {
-    minLat: 37.3890,
-    maxLat: 37.3910,
-    minLng: 126.6300,
-    maxLng: 126.6320
+    minLat: 37.3888,
+    maxLat: 37.3908,
+    minLng: 126.6380,
+    maxLng: 126.6400
 };
 
 function convertGpsToPixel(lat, lng) {
@@ -190,21 +236,15 @@ async function refreshState() {
 
         if (s.pump_on !== null && s.pump_on !== undefined) {
             isPumping = s.pump_on;
-            document.getElementById('pumpStatus').textContent = isPumping ? 'ON' : 'OFF';
-        }
-
-        if (s.pump_state !== null && s.pump_state !== undefined) {
-            document.getElementById('pumpStateActual').textContent = s.pump_state ? 'ON' : 'OFF';
-        }
-
-        if (s.led_state) {
-            const toHex = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
-            document.getElementById('ledStateActual').textContent =
-                `#${toHex(s.led_state.r)}${toHex(s.led_state.g)}${toHex(s.led_state.b)}`;
         }
 
         if (s.auto_mode !== null && s.auto_mode !== undefined) {
-            document.getElementById('autoModeStatus').textContent = s.auto_mode ? '자동' : '수동';
+            // 펌프는 기본적으로 수질에 따라 자동 작동하고, B 버튼으로 자동/수동을 토글,
+            // A 버튼으로 수동 모드일 때 직접 구동한다(actuator_driver_node.py). 배 조종
+            // 스틱(cmd_vel)은 펌프 모드와 무관하니 여기서 보지 않는다 - /actuator/auto_mode
+            // 값만 그대로 반영한다.
+            document.getElementById('pumpModeAutoBox').classList.toggle('on', s.auto_mode === true);
+            document.getElementById('pumpModeManualBox').classList.toggle('on', s.auto_mode === false);
         }
 
         if (s.water_quality) {
@@ -224,7 +264,7 @@ refreshState();
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// 📂 이미지 자원 관리 객체
+// 📂 이미지 자원 관리 객체 (오로라 green, yellow, red 추가)
 const assets = {
     lake: new Image(),
     ending: new Image(),
@@ -237,13 +277,16 @@ const assets = {
     garbageSmall1: new Image(),
     garbageSmall2: new Image(),
     garbageSmall3: new Image(),
-    waterArrow: new Image()
+    waterArrow: new Image(),
+    green: new Image(),
+    yellow: new Image(),
+    red: new Image()
 };
 
 // 이미지 파일명 매칭 설정
 assets.lake.src = "lake.png";
 assets.ending.src = "ending.png";
-assets.mainstart.src = "mainstart.jpg";
+assets.mainstart.src = "mainstart.png";
 assets.fourFish.src = "4fish.png";
 assets.pixelFishes.src = "PixelFishes.png";
 assets.ship.src = "ship.jpg";
@@ -253,6 +296,9 @@ assets.garbageSmall1.src = "garbage bag small 1.png";
 assets.garbageSmall2.src = "garbage bag small 2.png";
 assets.garbageSmall3.src = "garbage bag small 3.png";
 assets.waterArrow.src = "Water Arrow Preview.gif";
+assets.green.src = "green.png";
+assets.yellow.src = "yellow.png";
+assets.red.src = "red.png";
 
 // 게임 상태 관리 ("main" 또는 "game" 또는 "ending")
 let gameState = "main";
@@ -325,7 +371,7 @@ canvas.addEventListener("click", (e) => {
             return;
         }
         const sidebarX = canvas.width - 230;
-        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 290 && y <= 326) {
+        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 380 && y <= 416) {
             rollGachaFish();
         }
     } else if (gameState === "ending") {
@@ -483,8 +529,7 @@ setInterval(() => {
 
     if (timeLeft <= 0) {
         isGameOver = true;
-        alert(`TIME OVER ⏳\\n최종 점수: ${score}점`);
-        gameState = "main";
+        gameState = "ending";
         return;
     }
 
@@ -544,6 +589,11 @@ function batterySummaryText() {
 // 세로(600) 기준 좌표 로직은 그대로 두고, #gameContainer를 그 비율로 확대해서 창을 꽉 채운다
 // (모니터 해상도와 무관하게, 매 프레임 창 크기를 확인해서 동작).
 function updateResponsiveCanvas() {
+    // 카메라/펌프제어 패널은 조종 화면(game)에서만 보여준다 - 메인/엔딩 화면에서는 숨김.
+    const inGame = (gameState === "game");
+    document.getElementById('cameraPanel').classList.toggle('panel-hidden', !inGame);
+    document.getElementById('actuatorPanel').classList.toggle('panel-hidden', !inGame);
+
     const fillScale = window.innerHeight / canvas.height;
     const desiredWidth = (gameState === "game")
         ? Math.max(800, Math.round(window.innerWidth / fillScale))
@@ -556,19 +606,20 @@ function updateResponsiveCanvas() {
     document.getElementById('gameContainer').style.transform = `scale(${scale})`;
 
     // 사이드바(HUD)는 항상 캔버스 우측 230px 폭 고정 - 캔버스가 넓어지면 그만큼 오른쪽으로 밀림.
-    // #cameraPanel은 DOM 오버레이라 캔버스 좌표와 별개로 위치를 직접 맞춰줘야 한다.
+    // #cameraPanel은 왼쪽 열(미니맵 아래)에 고정이라 따로 옮길 필요 없지만, #actuatorPanel은
+    // 사이드바 안(수질 센서 패널과 뽑기 패널 사이)에 들어있어서 sidebarX를 따라가야 한다.
     const sidebarX = canvas.width - 230;
-    document.getElementById('cameraPanel').style.left = (sidebarX + 15) + 'px';
+    document.getElementById('actuatorPanel').style.left = (sidebarX + 15) + 'px';
 
     // 호수(월드) 폭도 뷰포트(sidebarX)만큼 늘려서 배경 이미지가 빈틈없이 다 채우도록 한다.
     mapWidth = Math.max(1140, sidebarX);
 }
 
 // --- [조이스틱 뽑기 버튼] 하드웨어 조이스틱 버튼이 물고기 4종을 개별로 고르기엔
-// 부족해서, 뽑기 자체를 버튼 하나에 배정한다. ROS의 /joy 토픽과는 별개로 브라우저가
+// 부족해서, 뽑기 자체를 버튼 하나(X)에 배정한다. ROS의 /joy 토픽과는 별개로 브라우저가
 // 직접 인식하는 HTML5 Gamepad API(navigator.getGamepads)를 사용한다 - 이벤트가 아니라
 // 매 프레임 폴링해야 버튼 상태를 읽을 수 있는 API라서 mainLoop 안에서 호출한다. ---
-const GACHA_GAMEPAD_BUTTON_INDEX = 4; // 실제 조이스틱에서 남는 버튼 번호로 조정 (예: LB=4)
+const GACHA_GAMEPAD_BUTTON_INDEX = 3; // X 버튼 (실측 확인 완료)
 let prevGachaButtonPressed = false;
 
 function pollGamepadForGacha() {
@@ -588,9 +639,33 @@ function pollGamepadForGacha() {
     prevGachaButtonPressed = pressed;
 }
 
+// --- [조이스틱 게임 시작 버튼] 메인 화면에서 마우스로 "게임 화면 시작"을 누르는 대신
+// 조이스틱의 Start 버튼으로 시작할 수 있게 한다. 버튼 인덱스 9번 = 실제 조이스틱으로
+// 실측 확인 완료 (Start 버튼). ---
+const START_GAMEPAD_BUTTON_INDEX = 9; // 실측 확인 완료
+let prevStartButtonPressed = false;
+
+function pollGamepadForStart() {
+    if (gameState !== "main") {
+        prevStartButtonPressed = false;
+        return;
+    }
+
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = pads[0];
+    const button = pad && pad.buttons[START_GAMEPAD_BUTTON_INDEX];
+    const pressed = !!(button && button.pressed);
+
+    if (pressed && !prevStartButtonPressed) {
+        startGame(); // 누르는 순간(edge)에만 1회 실행
+    }
+    prevStartButtonPressed = pressed;
+}
+
 let animTimer = 0;
 function mainLoop() {
     pollGamepadForGacha();
+    pollGamepadForStart();
     updateResponsiveCanvas();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -760,9 +835,55 @@ function mainLoop() {
             ctx.restore();
         }
 
-        // 5. 보트 스프라이트 출력
+        // 5. 보트 스프라이트 출력 및 오로라 배경 투명화 적용 (1번 코드와 동일)
         let screenBoatX = targetX - cameraX;
         let screenBoatY = targetY - cameraY;
+
+        // 실제 수질 센서(clarity_pct, /water_quality/data)를 따른다 - 게임 내부 시뮬레이션
+        // 변수인 waterQuality(점수/연출용)와는 별개다. 기준은 usv_actuators의 water_policy.py와
+        // 동일: 60 이상 좋음/초록, 40 미만 나쁨/빨강, 그 사이 보통/노랑.
+        let currentAuraImg = assets.green;
+        if (sensorWQ.clarity_pct !== null && sensorWQ.clarity_pct !== undefined) {
+            if (sensorWQ.clarity_pct < 40) {
+                currentAuraImg = assets.red;
+            } else if (sensorWQ.clarity_pct < 60) {
+                currentAuraImg = assets.yellow;
+            }
+        }
+
+        if (currentAuraImg.complete && currentAuraImg.naturalWidth !== 0) {
+            let tempAuraCanvas = document.createElement('canvas');
+            tempAuraCanvas.width = currentAuraImg.naturalWidth;
+            tempAuraCanvas.height = currentAuraImg.naturalHeight;
+            let tAuraCtx = tempAuraCanvas.getContext('2d');
+
+            tAuraCtx.drawImage(currentAuraImg, 0, 0);
+
+            try {
+                let imgData = tAuraCtx.getImageData(0, 0, tempAuraCanvas.width, tempAuraCanvas.height);
+                let data = imgData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                    let r = data[i], g = data[i+1], b = data[i+2];
+
+                    // 오로라 본연의 색상은 보호하고, 순수한 흰색 배경(250 이상)만 투명하게 제거
+                    if (r > 250 && g > 250 && b > 250) {
+                        data[i+3] = 0;
+                    }
+                }
+                tAuraCtx.putImageData(imgData, 0, 0);
+
+                ctx.save();
+                ctx.globalAlpha = 0.9; 
+                let auraSize = 95;
+                ctx.drawImage(tempAuraCanvas, screenBoatX - auraSize / 2, screenBoatY - auraSize / 2, auraSize, auraSize);
+                ctx.restore();
+            } catch (err) {
+                ctx.save();
+                ctx.globalAlpha = 0.9;
+                ctx.drawImage(currentAuraImg, screenBoatX - 47, screenBoatY - 47, 95, 95);
+                ctx.restore();
+            }
+        }
 
         if (assets.ship.complete && assets.ship.naturalWidth !== 0) {
             let sw = assets.ship.naturalWidth;
@@ -861,36 +982,38 @@ function mainLoop() {
         ctx.fillText(batterySummaryText(), sidebarX + 115, 236);
 
         // 뽑기 패널 (조이스틱 버튼 하나로 실행 가능한 단일 뽑기 버튼 + 등급표)
+        // 수질 센서 패널과의 사이에 펌프제어 패널(#actuatorPanel, DOM)이 끼어들면서
+        // 기존보다 90px 아래로 밀려났다.
         ctx.fillStyle = "#150d08";
         ctx.strokeStyle = "#e29578";
         ctx.lineWidth = 2;
-        ctx.fillRect(sidebarX + 15, 260, 200, 210);
-        ctx.strokeRect(sidebarX + 15, 260, 200, 210);
+        ctx.fillRect(sidebarX + 15, 350, 200, 210);
+        ctx.strokeRect(sidebarX + 15, 350, 200, 210);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("🎰 랜덤 물고기 뽑기", sidebarX + 115, 280);
+        ctx.fillText("🎰 랜덤 물고기 뽑기", sidebarX + 115, 370);
 
         // 뽑기 버튼 - 마우스 클릭(클릭 핸들러 참고) 또는 조이스틱 버튼(pollGamepadForGacha)으로 실행
         ctx.fillStyle = "#3a2214";
         ctx.strokeStyle = "#ffd166";
         ctx.lineWidth = 1;
-        ctx.fillRect(sidebarX + 25, 290, 180, 36);
-        ctx.strokeRect(sidebarX + 25, 290, 180, 36);
+        ctx.fillRect(sidebarX + 25, 380, 180, 36);
+        ctx.strokeRect(sidebarX + 25, 380, 180, 36);
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 12px '맑은 고딕'";
-        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) ✨`, sidebarX + 115, 312);
+        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) ✨`, sidebarX + 115, 402);
 
         ctx.fillStyle = "#a5a5a5";
         ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 버튼으로도 실행 가능)", sidebarX + 115, 340);
+        ctx.fillText("(조이스틱 X 버튼으로도 실행 가능)", sidebarX + 115, 430);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 10px '맑은 고딕'";
-        ctx.fillText("[ 등급표 ]", sidebarX + 115, 358);
+        ctx.fillText("[ 등급표 ]", sidebarX + 115, 448);
 
         let rarityRows = ["witch", "ghost", "santa", "pumpkin"].map((key, i) => ({
-            key, y: 374 + i * 18
+            key, y: 464 + i * 18
         }));
         ctx.font = "9px '맑은 고딕'";
         rarityRows.forEach(row => {

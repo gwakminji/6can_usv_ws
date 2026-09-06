@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+
+# colcon workspace build artifacts
+build/
+install/
+log/
+
+# arduino-app-cli build cache
+src/*/.cache/
+
+# macOS
+.DS_Store

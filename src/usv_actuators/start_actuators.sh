@@ -56,6 +56,10 @@ docker run -d \
         cd /ros2_ws
         colcon build --symlink-install --packages-select usv_actuators
         source /ros2_ws/install/setup.bash
+        export ROS_DOMAIN_ID=0
+        export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+        unset ROS_STATIC_PEERS
+        unset ROS_LOCALHOST_ONLY
         ros2 launch usv_actuators actuators.launch.py
     '
 
