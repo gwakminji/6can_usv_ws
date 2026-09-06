@@ -46,7 +46,8 @@ INDEX_HTML = """<!doctype html>
   .cam-warn { font-size: 8px; color: #fdd; text-align: center; padding: 0 4px; }
 
   #actuatorPanel {
-      position: absolute; top: 190px; left: 13px; width: 200px; box-sizing: border-box;
+      /* 위쪽 미니맵(canvas 내부 15,15 위치에 130x137로 그려짐)과 가로폭을 맞췄다 */
+      position: absolute; top: 190px; left: 18px; width: 130px; box-sizing: border-box;
       background-color: #150d08; border: 2px solid #e29578; padding: 6px; font-size: 11px;
       z-index: 10;
   }
@@ -57,6 +58,17 @@ INDEX_HTML = """<!doctype html>
   }
   #actuatorPanel button:hover { background: #357; }
   #actuatorPanel input[type=color] { width: 32px; height: 22px; vertical-align: middle; }
+  .pump-mode-bar { display: flex; gap: 4px; margin-bottom: 6px; }
+  .pump-mode-box {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+      background: #1c100a; border: 1px solid #444; border-radius: 4px; padding: 5px 0;
+  }
+  .pump-mode-light {
+      width: 10px; height: 10px; border-radius: 50%; background: #555;
+      box-shadow: inset 0 0 2px rgba(0,0,0,0.8);
+  }
+  .pump-mode-box.on .pump-mode-light { background: #3ddc55; box-shadow: 0 0 6px 2px rgba(61,220,85,0.8); }
+  .pump-mode-label { font-size: 9px; color: #ccc; }
 </style>
 </head>
 <body>
@@ -76,10 +88,18 @@ INDEX_HTML = """<!doctype html>
     </div>
 
     <div id="actuatorPanel">
-        <div class="title">펌프 상태 / LED 제어</div>
-        <div>펌프(조이스틱 버튼): <span id="pumpStatus">-</span> / 실제: <span id="pumpStateActual">-</span></div>
+        <div class="title">펌프 제어</div>
+        <div class="pump-mode-bar">
+            <div class="pump-mode-box" id="pumpModeAutoBox">
+                <span class="pump-mode-light"></span>
+                <span class="pump-mode-label">자동</span>
+            </div>
+            <div class="pump-mode-box" id="pumpModeManualBox">
+                <span class="pump-mode-light"></span>
+                <span class="pump-mode-label">수동</span>
+            </div>
+        </div>
         <div style="margin-top:6px">LED: <input type="color" id="ledColor" value="#00ff00" onchange="setLed()"> 실제: <span id="ledStateActual">-</span></div>
-        <div style="margin-top:6px">자동 제어(조이스틱 버튼): <span id="autoModeStatus">-</span></div>
     </div>
 </div>
 
@@ -125,12 +145,13 @@ function setLed() {
 // /actuator/auto_mode를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
 
 // --- [GPS] 위경도를 캔버스 픽셀 좌표로 변환 ---
-// 📍 송도 테스트 구역 가상 위경도 범위 설정
+// 📍 송도 센트럴파크 기준 위경도 범위 설정 - GPS 수신 전 기본 위치(및 미니맵)가
+// 실제로 존재하는 장소를 가리키도록 여기 좌표로 잡았다.
 const gpsBounds = {
-    minLat: 37.3890,
-    maxLat: 37.3910,
-    minLng: 126.6300,
-    maxLng: 126.6320
+    minLat: 37.3888,
+    maxLat: 37.3908,
+    minLng: 126.6380,
+    maxLng: 126.6400
 };
 
 function convertGpsToPixel(lat, lng) {
@@ -205,11 +226,6 @@ async function refreshState() {
 
         if (s.pump_on !== null && s.pump_on !== undefined) {
             isPumping = s.pump_on;
-            document.getElementById('pumpStatus').textContent = isPumping ? 'ON' : 'OFF';
-        }
-
-        if (s.pump_state !== null && s.pump_state !== undefined) {
-            document.getElementById('pumpStateActual').textContent = s.pump_state ? 'ON' : 'OFF';
         }
 
         if (s.led_state) {
@@ -219,7 +235,12 @@ async function refreshState() {
         }
 
         if (s.auto_mode !== null && s.auto_mode !== undefined) {
-            document.getElementById('autoModeStatus').textContent = s.auto_mode ? '자동' : '수동';
+            // 펌프는 기본적으로 수질에 따라 자동 작동하고, B 버튼으로 자동/수동을 토글,
+            // A 버튼으로 수동 모드일 때 직접 구동한다(actuator_driver_node.py). 배 조종
+            // 스틱(cmd_vel)은 펌프 모드와 무관하니 여기서 보지 않는다 - /actuator/auto_mode
+            // 값만 그대로 반영한다.
+            document.getElementById('pumpModeAutoBox').classList.toggle('on', s.auto_mode === true);
+            document.getElementById('pumpModeManualBox').classList.toggle('on', s.auto_mode === false);
         }
 
         if (s.water_quality) {
@@ -809,11 +830,16 @@ function mainLoop() {
         let screenBoatX = targetX - cameraX;
         let screenBoatY = targetY - cameraY;
 
-            let currentAuraImg = assets.green;
-        if (waterQuality < 40) {
-            currentAuraImg = assets.red;
-        } else if (waterQuality < 70) {
-            currentAuraImg = assets.yellow;
+        // 실제 수질 센서(clarity_pct, /water_quality/data)를 따른다 - 게임 내부 시뮬레이션
+        // 변수인 waterQuality(점수/연출용)와는 별개다. 기준은 usv_actuators의 water_policy.py와
+        // 동일: 60 이상 좋음/초록, 40 미만 나쁨/빨강, 그 사이 보통/노랑.
+        let currentAuraImg = assets.green;
+        if (sensorWQ.clarity_pct !== null && sensorWQ.clarity_pct !== undefined) {
+            if (sensorWQ.clarity_pct < 40) {
+                currentAuraImg = assets.red;
+            } else if (sensorWQ.clarity_pct < 60) {
+                currentAuraImg = assets.yellow;
+            }
         }
 
         if (currentAuraImg.complete && currentAuraImg.naturalWidth !== 0) {
@@ -969,7 +995,7 @@ function mainLoop() {
 
         ctx.fillStyle = "#a5a5a5";
         ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 Y 버튼으로도 실행 가능)", sidebarX + 115, 340);
+        ctx.fillText("(조이스틱 X 버튼으로도 실행 가능)", sidebarX + 115, 340);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 10px '맑은 고딕'";
