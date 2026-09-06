@@ -8,3 +8,6 @@ log/
 
 # arduino-app-cli build cache
 src/*/.cache/
+
+# macOS
+.DS_Store
