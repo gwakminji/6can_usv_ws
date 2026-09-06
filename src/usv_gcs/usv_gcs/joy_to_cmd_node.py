@@ -12,21 +12,20 @@ class JoyToCmdNode(Node):
     def __init__(self):
         super().__init__('joy_to_cmd_node')
 
-        # --- Parameters (팀 논의 후 조정) ---
+        # --- Parameters ---
         self.declare_parameter('linear_axis', 1)      # 전후진 축 번호
         self.declare_parameter('angular_axis', 0)     # 좌우 회전 축 번호
         self.declare_parameter('linear_scale', 1.0)    # m/s
         # 실측: 오른쪽으로 밀면 axes[0]=-1.0 이라서, 우회전 시 angular가 +가 되도록 부호 반전
         self.declare_parameter('angular_scale', -1.0)   # rad/s
         self.declare_parameter('deadzone', 0.05)
-        # 펌프/워터캐논 작동 버튼 번호. 조종은 조이스틱 하나로만 하므로(마우스로 GUI
-        # 버튼을 누를 사람이 없음) 여기서 발행한다. 0번(Xbox 계열 컨트롤러 기준 A 버튼)으로
-        # 확정. 실제 조이스틱에서 다르게 나오면 코드는 그대로 두고 pump_button 인자만
-        # 바꾸면 됨.
+        # 펌프/워터캐논 작동 버튼 번호. 조종은 조이스틱 하나로만 하므로여기서 발행한다. 
+        # 0번(Xbox 계열 컨트롤러 기준 A 버튼)으로 확정. 
+        # 실제 조이스틱에서 다르게 나오면 코드는 그대로 두고 pump_button 인자만 바꾸면 됨.
         self.declare_parameter('pump_button', 0)
-        # 자동/수동 제어 토글 버튼 번호. 마우스로 GUI 체크박스를 누를 사람이 없으므로
-        # pump_button과 동일한 패턴으로 여기서 토글 발행한다. 실제 버튼 배정은 팀 논의 후
-        # 확정 필요 - 임시로 1번(Xbox 계열 기준 B 버튼) 지정.
+        # 자동/수동 제어 토글 버튼 번호.
+        # pump_button과 동일한 패턴으로 여기서 토글 발행한다. 
+        # 1번(Xbox 계열 기준 B 버튼) 지정.
         self.declare_parameter('auto_button', 1)
         self.declare_parameter('enable_heartbeat', False)   # /gcs/heartbeat 발행 여부 - 설계 미확정, 팀 논의 후 True로 전환
         self.declare_parameter('heartbeat_period_sec', 0.5)  # watchdog timeout보다 충분히 짧게 설정 필요

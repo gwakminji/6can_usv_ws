@@ -29,29 +29,49 @@ INDEX_HTML = """<!doctype html>
   }
 
   #cameraPanel {
-      position: absolute; top: 480px; left: 585px; width: 200px; height: 120px;
+      /* 왼쪽 열(미니맵)과 가로폭을 맞추고, 그 아래 남는 공간을 캔버스
+         하단(600px)까지 꽉 채운다. 펌프제어 패널은 우측 사이드바로 옮겨서 이 열엔
+         미니맵만 남았다. */
+      position: absolute; top: 185px; left: 18px; width: 130px; height: 415px;
       background-color: #1c100a; border: 2px solid #38bdf8; box-sizing: border-box;
-      padding: 3px; display: flex; flex-direction: column; justify-content: space-between;
+      padding: 3px; display: flex; flex-direction: column; gap: 6px;
       z-index: 10;
   }
   .cam-box {
-      width: 100%; height: 54px; background-color: #000; border: 1px solid #38bdf8;
+      width: 100%; flex: 1; min-height: 0; background-color: #000; border: 1px solid #38bdf8;
       position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center;
   }
   .cam-title {
-      position: absolute; top: 2px; left: 4px; font-size: 8px; color: #38bdf8; font-weight: bold;
+      position: absolute; top: 2px; left: 4px; font-size: 10px; color: #38bdf8; font-weight: bold;
       background: rgba(0, 0, 0, 0.7); padding: 1px 3px; border-radius: 2px; z-index: 2;
   }
   .cam-box img { width: 100%; height: 100%; object-fit: cover; }
-  .cam-warn { font-size: 8px; color: #fdd; text-align: center; padding: 0 4px; }
+  .cam-warn { font-size: 9px; color: #fdd; text-align: center; padding: 0 4px; }
 
   #actuatorPanel {
-      /* 위쪽 미니맵(canvas 내부 15,15 위치에 130x137로 그려짐)과 가로폭을 맞췄다 */
-      position: absolute; top: 190px; left: 18px; width: 130px; box-sizing: border-box;
+      /* 우측 사이드바(수질 센서 모니터링 패널 바로 아래, 뽑기 패널 바로 위)에 들어간다.
+         그 두 패널과 가로폭(200px)을 맞추고, sidebarX를 따라가야 해서 left는
+         updateResponsiveCanvas()가 매 프레임 갱신한다. */
+      position: absolute; top: 248px; left: 585px; width: 200px; box-sizing: border-box;
       background-color: #150d08; border: 2px solid #e29578; padding: 6px; font-size: 11px;
       z-index: 10;
   }
-  #actuatorPanel .title { color: #ffd166; font-weight: bold; margin-bottom: 4px; }
+  #actuatorPanel .title {
+      display: inline-block; vertical-align: middle;
+      color: #ffd166; font-weight: bold; margin-bottom: 4px;
+  }
+  .gamepad-btn-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 15px; height: 15px; border-radius: 50%; background: #e6423f;
+      color: #fff; font-size: 9px; font-weight: bold; font-family: Arial, sans-serif;
+      vertical-align: middle; margin-right: 5px; box-shadow: inset 0 0 2px rgba(0,0,0,0.5);
+  }
+  .gamepad-btn-badge.badge-green { background: #3ddc55; }
+  .pump-fire-hint {
+      display: flex; align-items: center; gap: 5px;
+      margin-top: 6px; font-size: 11px; font-weight: bold; color: #ffd166;
+  }
+  .pump-fire-hint .gamepad-btn-badge { margin-right: 0; }
   #actuatorPanel button {
       background: #246; color: #fff; border: none; border-radius: 4px; padding: 4px 8px;
       cursor: pointer; margin-right: 4px; font-size: 10px;
@@ -69,6 +89,8 @@ INDEX_HTML = """<!doctype html>
   }
   .pump-mode-box.on .pump-mode-light { background: #3ddc55; box-shadow: 0 0 6px 2px rgba(61,220,85,0.8); }
   .pump-mode-label { font-size: 9px; color: #ccc; }
+
+  .panel-hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -76,7 +98,7 @@ INDEX_HTML = """<!doctype html>
     <div id="gpsBanner">⚠ GPS 신호 없음 (마지막 위치 유지 중)</div>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
-    <div id="cameraPanel">
+    <div id="cameraPanel" class="panel-hidden">
         <div class="cam-box">
             <span class="cam-title">📷 수면 (Surface)</span>
             <img id="surfaceCam" alt="수면 카메라 연결 중..." onerror="this.style.opacity=0.3">
@@ -87,8 +109,8 @@ INDEX_HTML = """<!doctype html>
         </div>
     </div>
 
-    <div id="actuatorPanel">
-        <div class="title">펌프 제어</div>
+    <div id="actuatorPanel" class="panel-hidden">
+        <span class="gamepad-btn-badge">B</span><div class="title">펌프 제어</div>
         <div class="pump-mode-bar">
             <div class="pump-mode-box" id="pumpModeAutoBox">
                 <span class="pump-mode-light"></span>
@@ -99,7 +121,7 @@ INDEX_HTML = """<!doctype html>
                 <span class="pump-mode-label">수동</span>
             </div>
         </div>
-        <div style="margin-top:6px">LED: <input type="color" id="ledColor" value="#00ff00" onchange="setLed()"> 실제: <span id="ledStateActual">-</span></div>
+        <div class="pump-fire-hint"><span class="gamepad-btn-badge badge-green">A</span>펌프 작동</div>
     </div>
 </div>
 
@@ -128,18 +150,6 @@ if (cameraHost) {
 
 // --- [펌프] 조종은 조이스틱 하나로만 하므로 펌프도 joy_to_cmd_node가 조이스틱 버튼으로
 // 직접 /actuator/pump_cmd를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
-
-// --- [LED] 아직 조이스틱에 버튼을 안 배정해서 여기 색상 피커로 /api/led에 POST ---
-function setLed() {
-    const hex = document.getElementById('ledColor').value;
-    const r = parseInt(hex.slice(1, 3), 16) / 255;
-    const g = parseInt(hex.slice(3, 5), 16) / 255;
-    const b = parseInt(hex.slice(5, 7), 16) / 255;
-    fetch('/api/led', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({r, g, b})
-    });
-}
 
 // --- [자동 제어] 펌프와 마찬가지로 joy_to_cmd_node가 조이스틱 버튼으로 직접
 // /actuator/auto_mode를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
@@ -228,12 +238,6 @@ async function refreshState() {
             isPumping = s.pump_on;
         }
 
-        if (s.led_state) {
-            const toHex = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
-            document.getElementById('ledStateActual').textContent =
-                `#${toHex(s.led_state.r)}${toHex(s.led_state.g)}${toHex(s.led_state.b)}`;
-        }
-
         if (s.auto_mode !== null && s.auto_mode !== undefined) {
             // 펌프는 기본적으로 수질에 따라 자동 작동하고, B 버튼으로 자동/수동을 토글,
             // A 버튼으로 수동 모드일 때 직접 구동한다(actuator_driver_node.py). 배 조종
@@ -282,7 +286,7 @@ const assets = {
 // 이미지 파일명 매칭 설정
 assets.lake.src = "lake.png";
 assets.ending.src = "ending.png";
-assets.mainstart.src = "mainstart.jpg";
+assets.mainstart.src = "mainstart.png";
 assets.fourFish.src = "4fish.png";
 assets.pixelFishes.src = "PixelFishes.png";
 assets.ship.src = "ship.jpg";
@@ -367,7 +371,7 @@ canvas.addEventListener("click", (e) => {
             return;
         }
         const sidebarX = canvas.width - 230;
-        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 290 && y <= 326) {
+        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 380 && y <= 416) {
             rollGachaFish();
         }
     } else if (gameState === "ending") {
@@ -525,8 +529,7 @@ setInterval(() => {
 
     if (timeLeft <= 0) {
         isGameOver = true;
-        alert(`TIME OVER ⏳\n최종 점수: ${score}점`);
-        gameState = "main";
+        gameState = "ending";
         return;
     }
 
@@ -586,6 +589,11 @@ function batterySummaryText() {
 // 세로(600) 기준 좌표 로직은 그대로 두고, #gameContainer를 그 비율로 확대해서 창을 꽉 채운다
 // (모니터 해상도와 무관하게, 매 프레임 창 크기를 확인해서 동작).
 function updateResponsiveCanvas() {
+    // 카메라/펌프제어 패널은 조종 화면(game)에서만 보여준다 - 메인/엔딩 화면에서는 숨김.
+    const inGame = (gameState === "game");
+    document.getElementById('cameraPanel').classList.toggle('panel-hidden', !inGame);
+    document.getElementById('actuatorPanel').classList.toggle('panel-hidden', !inGame);
+
     const fillScale = window.innerHeight / canvas.height;
     const desiredWidth = (gameState === "game")
         ? Math.max(800, Math.round(window.innerWidth / fillScale))
@@ -598,9 +606,10 @@ function updateResponsiveCanvas() {
     document.getElementById('gameContainer').style.transform = `scale(${scale})`;
 
     // 사이드바(HUD)는 항상 캔버스 우측 230px 폭 고정 - 캔버스가 넓어지면 그만큼 오른쪽으로 밀림.
-    // #cameraPanel은 DOM 오버레이라 캔버스 좌표와 별개로 위치를 직접 맞춰줘야 한다.
+    // #cameraPanel은 왼쪽 열(미니맵 아래)에 고정이라 따로 옮길 필요 없지만, #actuatorPanel은
+    // 사이드바 안(수질 센서 패널과 뽑기 패널 사이)에 들어있어서 sidebarX를 따라가야 한다.
     const sidebarX = canvas.width - 230;
-    document.getElementById('cameraPanel').style.left = (sidebarX + 15) + 'px';
+    document.getElementById('actuatorPanel').style.left = (sidebarX + 15) + 'px';
 
     // 호수(월드) 폭도 뷰포트(sidebarX)만큼 늘려서 배경 이미지가 빈틈없이 다 채우도록 한다.
     mapWidth = Math.max(1140, sidebarX);
@@ -973,36 +982,38 @@ function mainLoop() {
         ctx.fillText(batterySummaryText(), sidebarX + 115, 236);
 
         // 뽑기 패널 (조이스틱 버튼 하나로 실행 가능한 단일 뽑기 버튼 + 등급표)
+        // 수질 센서 패널과의 사이에 펌프제어 패널(#actuatorPanel, DOM)이 끼어들면서
+        // 기존보다 90px 아래로 밀려났다.
         ctx.fillStyle = "#150d08";
         ctx.strokeStyle = "#e29578";
         ctx.lineWidth = 2;
-        ctx.fillRect(sidebarX + 15, 260, 200, 210);
-        ctx.strokeRect(sidebarX + 15, 260, 200, 210);
+        ctx.fillRect(sidebarX + 15, 350, 200, 210);
+        ctx.strokeRect(sidebarX + 15, 350, 200, 210);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("🎰 랜덤 물고기 뽑기", sidebarX + 115, 280);
+        ctx.fillText("🎰 랜덤 물고기 뽑기", sidebarX + 115, 370);
 
         // 뽑기 버튼 - 마우스 클릭(클릭 핸들러 참고) 또는 조이스틱 버튼(pollGamepadForGacha)으로 실행
         ctx.fillStyle = "#3a2214";
         ctx.strokeStyle = "#ffd166";
         ctx.lineWidth = 1;
-        ctx.fillRect(sidebarX + 25, 290, 180, 36);
-        ctx.strokeRect(sidebarX + 25, 290, 180, 36);
+        ctx.fillRect(sidebarX + 25, 380, 180, 36);
+        ctx.strokeRect(sidebarX + 25, 380, 180, 36);
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 12px '맑은 고딕'";
-        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) ✨`, sidebarX + 115, 312);
+        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) ✨`, sidebarX + 115, 402);
 
         ctx.fillStyle = "#a5a5a5";
         ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 X 버튼으로도 실행 가능)", sidebarX + 115, 340);
+        ctx.fillText("(조이스틱 X 버튼으로도 실행 가능)", sidebarX + 115, 430);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 10px '맑은 고딕'";
-        ctx.fillText("[ 등급표 ]", sidebarX + 115, 358);
+        ctx.fillText("[ 등급표 ]", sidebarX + 115, 448);
 
         let rarityRows = ["witch", "ghost", "santa", "pumpkin"].map((key, i) => ({
-            key, y: 374 + i * 18
+            key, y: 464 + i * 18
         }));
         ctx.font = "9px '맑은 고딕'";
         rarityRows.forEach(row => {
