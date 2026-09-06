@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+<<<<<<< HEAD
 """
 thruster_driver_node
 
@@ -24,6 +25,8 @@ MCU
 ESC / Motor
 """
 
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
 import socket
 import struct
 import time
@@ -33,6 +36,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 
 
+<<<<<<< HEAD
 # ============================================================
 # Network
 # ============================================================
@@ -58,6 +62,15 @@ INPUT_DEADBAND = 0.05
 CMD_TIMEOUT = 0.5
 
 # UDP 전송 주기
+=======
+GATEWAY_ADDR = ("127.0.0.1", 5005)
+
+NEUTRAL_PWM = 1500
+MAX_DELTA = 200
+INPUT_DEADBAND = 0.05
+CMD_TIMEOUT = 0.5
+
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
 RATE_HZ = 20.0
 DT = 1.0 / RATE_HZ
 
@@ -71,7 +84,10 @@ class ThrusterDriverNode(Node):
     def __init__(self):
         super().__init__("thruster_driver_node")
 
+<<<<<<< HEAD
         # /cmd_vel subscriber
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
         self.create_subscription(
             Twist,
             "/cmd_vel",
@@ -79,12 +95,16 @@ class ThrusterDriverNode(Node):
             10
         )
 
+<<<<<<< HEAD
         # UDP socket
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
         self.sock = socket.socket(
             socket.AF_INET,
             socket.SOCK_DGRAM
         )
 
+<<<<<<< HEAD
         # 현재 목표 PWM
         self.target_left = NEUTRAL_PWM
         self.target_right = NEUTRAL_PWM
@@ -96,6 +116,14 @@ class ThrusterDriverNode(Node):
         self.timed_out = True
 
         # 20Hz control loop
+=======
+        self.target_left = NEUTRAL_PWM
+        self.target_right = NEUTRAL_PWM
+
+        self.last_cmd_time = 0.0
+        self.timed_out = True
+
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
         self.create_timer(
             DT,
             self.control_loop
@@ -108,12 +136,23 @@ class ThrusterDriverNode(Node):
 
     def on_cmd_vel(self, msg: Twist):
 
+<<<<<<< HEAD
         # 입력 제한
         linear = clamp(
             msg.linear.x,
             -1.0,
             1.0
         )
+=======
+        linear = clamp(msg.linear.x, -1.0, 1.0)
+        angular = clamp(msg.angular.z, -1.0, 1.0)
+
+        if abs(linear) < INPUT_DEADBAND:
+            linear = 0.0
+
+        if abs(angular) < INPUT_DEADBAND:
+            angular = 0.0
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
 
         angular = clamp(
             msg.angular.z,
@@ -139,7 +178,10 @@ class ThrusterDriverNode(Node):
         left = linear - angular
         right = linear + angular
 
+<<<<<<< HEAD
         # 비율 유지하면서 -1 ~ +1 범위로 정규화
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
         scale = max(
             1.0,
             abs(left),
@@ -149,6 +191,7 @@ class ThrusterDriverNode(Node):
         left /= scale
         right /= scale
 
+<<<<<<< HEAD
         # -1 ~ +1
         # ↓
         # 1500 ± MAX_DELTA
@@ -167,6 +210,16 @@ class ThrusterDriverNode(Node):
         )
 
         # 안전 범위 제한
+=======
+        left_pwm = int(round(
+            NEUTRAL_PWM + left * MAX_DELTA
+        ))
+
+        right_pwm = int(round(
+            NEUTRAL_PWM + right * MAX_DELTA
+        ))
+
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
         left_pwm = clamp(
             left_pwm,
             NEUTRAL_PWM - MAX_DELTA,
@@ -186,19 +239,28 @@ class ThrusterDriverNode(Node):
         self.timed_out = False
 
         self.get_logger().info(
+<<<<<<< HEAD
             f"CMD "
             f"linear={linear:.2f} "
             f"angular={angular:.2f} "
             f"-> "
             f"L={left_pwm}us "
             f"R={right_pwm}us"
+=======
+            f"CMD linear={linear:.2f} "
+            f"angular={angular:.2f} "
+            f"-> L={left_pwm}us R={right_pwm}us"
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
         )
 
     def control_loop(self):
 
         now = time.monotonic()
 
+<<<<<<< HEAD
         # /cmd_vel timeout
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
         if (
             self.last_cmd_time == 0.0
             or
@@ -211,7 +273,10 @@ class ThrusterDriverNode(Node):
                 self.get_logger().warning(
                     "/cmd_vel timeout -> neutral"
                 )
+<<<<<<< HEAD
 
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
                 self.timed_out = True
 
         else:
@@ -219,8 +284,11 @@ class ThrusterDriverNode(Node):
             right = self.target_right
 
         try:
+<<<<<<< HEAD
 
             # int16 little-endian 2개
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
             packet = struct.pack(
                 "<hh",
                 int(left),
@@ -233,7 +301,10 @@ class ThrusterDriverNode(Node):
             )
 
         except Exception as error:
+<<<<<<< HEAD
 
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
             self.get_logger().warning(
                 f"UDP send error: {error}"
             )
@@ -241,20 +312,28 @@ class ThrusterDriverNode(Node):
     def send_neutral(self):
 
         try:
+<<<<<<< HEAD
 
+=======
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
             packet = struct.pack(
                 "<hh",
                 NEUTRAL_PWM,
                 NEUTRAL_PWM
             )
 
+<<<<<<< HEAD
             # 종료 시 여러 번 중립 전송
             for _ in range(5):
 
+=======
+            for _ in range(5):
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
                 self.sock.sendto(
                     packet,
                     GATEWAY_ADDR
                 )
+<<<<<<< HEAD
 
                 time.sleep(0.02)
 
@@ -267,6 +346,12 @@ class ThrusterDriverNode(Node):
             self.get_logger().warning(
                 f"Failed to send neutral: {error}"
             )
+=======
+                time.sleep(0.02)
+
+        except Exception:
+            pass
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
 
 
 def main(args=None):
@@ -284,9 +369,13 @@ def main(args=None):
         pass
 
     finally:
+<<<<<<< HEAD
 
         node.send_neutral()
 
+=======
+        node.send_neutral()
+>>>>>>> 18c3751276ba4aaa531b354225a16a0de75b6ad8
         node.destroy_node()
 
         rclpy.shutdown()
