@@ -3,6 +3,6 @@
 
 name: usv_actuators
 description: "USV B2 board: thruster and pump/LED actuator drivers (ROS 2 Jazzy)."
-icon: "USV"
+icon: "🚿"
 ports: []
 bricks: []
