@@ -10,7 +10,9 @@ set -euo pipefail
 # 원본은 건드리지 않았다. 추진기 보드는 start_actuators.sh를 그대로 쓰면 된다.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="${USV_PUMP_PROJECT_DIR:-$SCRIPT_DIR}"
+# 이 스크립트는 레포 루트에 있고, 실제 패키지는 src/usv_actuators 아래에 있다.
+# start_b1.sh와 같은 위치 규칙이다.
+PROJECT_DIR="${USV_PUMP_PROJECT_DIR:-$SCRIPT_DIR/src/usv_actuators}"
 CONTAINER_NAME="usv_pump_container"
 # 멀티캐스트가 막힌 환경에서 다른 기기를 유니캐스트로 찾기 위한 피어 목록.
 # 세미콜론으로 여러 개를 넣을 수 있다 (예: "192.168.0.5;192.168.0.4").

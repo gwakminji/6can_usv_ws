@@ -8,7 +8,7 @@
 ## 1. 한 줄 요약
 
 ```bash
-~/ArduinoApps/6can_usv_ws/src/usv_actuators/start_pump.sh
+~/ArduinoApps/6can_usv_ws/start_pump.sh
 ```
 
 이 한 줄이 스케치 업로드부터 ROS 노드 실행까지 전부 처리합니다.
@@ -86,7 +86,7 @@ git clone <레포 주소>
 ## 3. 실행
 
 ```bash
-~/ArduinoApps/6can_usv_ws/src/usv_actuators/start_pump.sh
+~/ArduinoApps/6can_usv_ws/start_pump.sh
 ```
 
 하는 일:
