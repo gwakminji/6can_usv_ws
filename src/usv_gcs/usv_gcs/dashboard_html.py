@@ -126,6 +126,11 @@ INDEX_HTML = """<!doctype html>
 </div>
 
 <script>
+// --- [카메라 스트림 표시 여부] 웹 대시보드에서 카메라 화면을 쓰지 않기로 해서 껐다.
+// 다시 켜려면 이 값만 true로 바꾸면 된다 (아래 카메라 관련 코드는 그대로 둬도 됨 -
+// 이 플래그가 스트림 연결/패널 표시를 전부 막는다). README "카메라 표시 켜기/끄기" 참고.
+const SHOW_CAMERA = false;
+
 // --- [카메라 스트림] B1 보드의 camera_streaming 패키지(http_video_server)가 MJPEG를
 // 직접 서빙한다 - GCS 자신이 아니라 B1 보드 위에서 도는 서버라 GCS의 location.hostname으로
 // 폴백하면 안 된다(폴백하면 GCS 자신의 8000번을 찍어서 조용히 검은 화면이 된다). 포트는
@@ -134,12 +139,12 @@ INDEX_HTML = """<!doctype html>
 // 폴백 없이 화면에 설정 안내를 띄운다 - 잘못된 주소로 붙는 것보다 낫다.
 const CAMERA_PORT = 8000;
 const cameraHost = "__CAMERA_HOST__";
-if (cameraHost) {
+if (SHOW_CAMERA && cameraHost) {
     document.getElementById('surfaceCam').src =
         `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/surface/image_raw`;
     document.getElementById('underwaterCam').src =
         `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/underwater/image_raw`;
-} else {
+} else if (SHOW_CAMERA) {
     document.querySelectorAll('#cameraPanel .cam-box').forEach((box) => {
         const warn = document.createElement('div');
         warn.className = 'cam-warn';
@@ -591,7 +596,7 @@ function batterySummaryText() {
 function updateResponsiveCanvas() {
     // 카메라/펌프제어 패널은 조종 화면(game)에서만 보여준다 - 메인/엔딩 화면에서는 숨김.
     const inGame = (gameState === "game");
-    document.getElementById('cameraPanel').classList.toggle('panel-hidden', !inGame);
+    document.getElementById('cameraPanel').classList.toggle('panel-hidden', !inGame || !SHOW_CAMERA);
     document.getElementById('actuatorPanel').classList.toggle('panel-hidden', !inGame);
 
     const fillScale = window.innerHeight / canvas.height;
