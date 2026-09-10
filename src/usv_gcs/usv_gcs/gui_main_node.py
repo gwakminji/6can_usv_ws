@@ -103,7 +103,7 @@ class GuiMainNode(Node):
     def on_water_quality(self, msg: String):
         try:
             data = json.loads(msg.data)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError): 
             return
         with self.state_lock:
             self.state['water_quality'] = data

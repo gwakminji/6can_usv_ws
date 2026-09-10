@@ -75,8 +75,8 @@ class CameraPublisher:
 def main():
     rclpy.init()
     node = Node('camera_node')
-    node.declare_parameter('surface_device', '/dev/video2')
-    node.declare_parameter('underwater_device', '/dev/video3')
+    node.declare_parameter('surface_device', '/dev/video0')
+    node.declare_parameter('underwater_device', '/dev/video1')
     node.declare_parameter('width', 640)
     node.declare_parameter('height', 480)
     node.declare_parameter('fps', 15.0)

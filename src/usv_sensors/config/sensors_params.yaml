@@ -7,5 +7,5 @@ camera_node:
     # TODO(B1 담당자): v4l2-ctl --list-devices 또는 ls /dev/video*로 확인한
     # 실제 장치 번호로 바꿀 것.
     surface_device: 0
-    underwater_device: 2
+    underwater_device: 1
     fps: 15.0

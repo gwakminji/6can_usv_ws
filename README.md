@@ -219,11 +219,6 @@ ros2 launch usv_gcs gcs.launch.py linear_axis:=1 angular_axis:=0 pump_button:=0 
 - [x] `camera_node`, `http_video_server` — 코드 완료, 합성 프레임으로 파이프라인 검증됨
 - [ ] 실제 USB 카메라 미연결 (`CAMERA_STREAMING.md` 참고)
 
-**카메라 확인 (B1 위에서, 순서대로)**
-1. 컨테이너: `docker ps | grep camera_streaming` — 떠 있는지
-2. 장치 인식: `v4l2-ctl --list-devices` — 실제 `/dev/videoN` 번호가 launch 인자(`surface_device`/`underwater_device`)와 일치하는지
-3. 토픽 발행: `ros2 topic echo /camera/surface/image_raw --once` — 응답 없으면 카메라를 못 열고 있는 것 (`docker logs camera_streaming_container --tail 50`에서 `could not open ... will retry` 확인)
-4. HTTP 서버 자체: `curl http://localhost:8000/`, `curl -o /tmp/s.jpg "http://localhost:8000/snapshot?topic=/camera/surface/image_raw"` 후 `/tmp/s.jpg`가 정상 JPEG인지
 
 ### B2 — `usv_actuators`
 
