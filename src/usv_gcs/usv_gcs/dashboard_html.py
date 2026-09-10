@@ -662,10 +662,35 @@ function pollGamepadForStart() {
     prevStartButtonPressed = pressed;
 }
 
+// --- [조이스틱 back 버튼] 엔딩 화면에서 마우스로 "메인 화면으로 돌아가기"를 누르는
+// 대신 조이스틱의 Back 버튼으로 돌아갈 수 있게 한다. 버튼 인덱스 8 = 표준 Gamepad API
+// 매핑상 Back/Select 버튼 추정치 - 실제 조이스틱으로 검증 필요(안 맞으면 콘솔에서
+// navigator.getGamepads()[0].buttons를 눌러보며 pressed 인덱스 확인). ---
+const BACK_GAMEPAD_BUTTON_INDEX = 8;
+let prevBackButtonPressed = false;
+
+function pollGamepadForBack() {
+    if (gameState !== "ending") {
+        prevBackButtonPressed = false;
+        return;
+    }
+
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = pads[0];
+    const button = pad && pad.buttons[BACK_GAMEPAD_BUTTON_INDEX];
+    const pressed = !!(button && button.pressed);
+
+    if (pressed && !prevBackButtonPressed) {
+        gameState = "main"; // 누르는 순간(edge)에만 1회 실행
+    }
+    prevBackButtonPressed = pressed;
+}
+
 let animTimer = 0;
 function mainLoop() {
     pollGamepadForGacha();
     pollGamepadForStart();
+    pollGamepadForBack();
     updateResponsiveCanvas();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
