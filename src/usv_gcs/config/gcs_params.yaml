@@ -4,3 +4,8 @@
 #
 # camera_host: B1 보드의 IP. B1 보드에서 `hostname -I` 실행해서 확인 (README.md 3항 참고).
 camera_host: "192.168.0.4"
+
+# google_maps_api_key는 여기(gcs_params.yaml)가 아니라 같은 폴더의 gcs_secrets.yaml에
+# 넣으세요. 이 파일(gcs_params.yaml)은 git에 커밋되는 파일이라 키를 여기 적으면
+# 저장소에 그대로 노출됩니다. 실제로 값을 읽는 파일: src/usv_gcs/config/gcs_secrets.yaml
+# (확장자 뒤에 .example이 안 붙은 쪽 — 그 파일은 .gitignore에 등록되어 커밋되지 않습니다)

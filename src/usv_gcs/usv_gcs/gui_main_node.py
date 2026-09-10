@@ -165,6 +165,45 @@ def _config_paths() -> list:
     return paths
 
 
+def _secrets_config_paths() -> list:
+    """gcs_secrets.yaml을 찾을 후보 경로들 (_config_paths()와 동일한 패턴).
+
+    gcs_params.yaml과 이름만 다른 별도 파일로 둔 이유: gcs_params.yaml은 git에 커밋되는
+    설정이고, gcs_secrets.yaml은 API 키 같은 값이라 .gitignore로 커밋을 막아뒀다. 한
+    파일에 같이 두면 특정 줄만 gitignore할 수 없어서 파일 자체를 분리했다.
+    """
+    paths = []
+    try:
+        paths.append(
+            os.path.join(get_package_share_directory('usv_gcs'), 'config', 'gcs_secrets.yaml')
+        )
+    except Exception:
+        pass
+    src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    paths.append(os.path.join(src_dir, 'config', 'gcs_secrets.yaml'))
+    return paths
+
+
+def _google_maps_api_key_from_config(node: GuiMainNode) -> str:
+    """config/gcs_secrets.yaml의 google_maps_api_key 값을 읽는다.
+
+    파일이 없거나(.example만 복사 안 한 경우) 키가 비어있으면 조용히 빈 문자열을
+    반환한다 - 미니맵은 빈 박스로 폴백하는 선택 기능이라 camera_host처럼 에러 로그를
+    띄울 정도는 아니다.
+    """
+    for config_path in _secrets_config_paths():
+        try:
+            with open(config_path) as f:
+                data = yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError):
+            continue
+        key = str(data.get('google_maps_api_key') or '')
+        if key:
+            node.get_logger().info(f'google_maps_api_key 설정됨 ({config_path})')
+            return key
+    return ''
+
+
 def _camera_host_from_config(node: GuiMainNode) -> str:
     """config/gcs_params.yaml의 camera_host 값을 읽는다 (launch 인자를 안 넘겼을 때 폴백).
 
@@ -202,7 +241,13 @@ def create_app(node: GuiMainNode) -> Flask:
             'config/gcs_params.yaml에 B1 보드 IP를 적거나 '
             'ros2 launch usv_gcs gcs.launch.py camera_host:=<B1_IP> 로 넘길 것.'
         )
-    rendered_index_html = INDEX_HTML.replace('__CAMERA_HOST__', camera_host)
+    google_maps_api_key = _google_maps_api_key_from_config(node)
+
+    rendered_index_html = (
+        INDEX_HTML
+        .replace('__CAMERA_HOST__', camera_host)
+        .replace('__GOOGLE_MAPS_API_KEY__', google_maps_api_key)
+    )
 
     @app.get('/')
     def index():
