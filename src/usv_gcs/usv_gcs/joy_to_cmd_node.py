@@ -68,7 +68,7 @@ class JoyToCmdNode(Node):
         self.get_logger().info('joy_to_cmd_node started')
         self.prev_pump_state = False # 이전 펌프 상태를 저장하여 버튼 상태 변화 감지용
         self.prev_auto_button_state = False  # 버튼 눌림 자체의 변화 감지용 (edge trigger)
-        self.auto_mode = True  # 기본값: 자동 제어 켜짐
+        self.auto_mode = False  # 기본값: 수동 제어 (B 버튼으로 자동으로 전환 가능)
 
         # B2가 노드 시작 직후 켜져도 기본값을 바로 알 수 있도록 시작 시 한 번 발행.
         # (버튼을 누르기 전까지는 /joy 콜백이 안 돌아서 값이 안 나감)
@@ -93,7 +93,11 @@ class JoyToCmdNode(Node):
 
         self.cmd_pub.publish(twist)
 
-        if len(msg.buttons) > self.pump_button:
+        # 자동 모드일 때는 A 버튼을 눌러도 /actuator/pump_cmd 자체를 발행하지 않는다 -
+        # 펌프 on/off는 수동 모드에서만 바뀌어야 하고, GCS 화면(pump_on)도 이 토픽으로
+        # 갱신되므로 여기서 막아야 화면까지 같이 안 바뀐다 (actuator_driver_node도
+        # 자동 모드 중엔 이 명령을 무시하지만, 애초에 GCS에서부터 안 보내는 게 맞다).
+        if not self.auto_mode and len(msg.buttons) > self.pump_button:
             new_state = bool(msg.buttons[self.pump_button])
             if new_state != self.prev_pump_state:
                 pump_msg = Bool()

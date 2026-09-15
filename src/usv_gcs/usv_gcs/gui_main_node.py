@@ -82,11 +82,11 @@ class GuiMainNode(Node):
             'cmd_vel': None,
             'pump_on': None,
             'pump_state': None,
-            # joy_to_cmd_node/actuator_driver_node 둘 다 항상 자동 모드로 시작하므로 기본값을
-            # True로 맞춰둔다 - /actuator/auto_mode가 volatile QoS라 joy_to_cmd_node의 시작 시
-            # 발행(joy_to_cmd_node.py 참고)을 GCS가 늦게 구독 시작하면 놓칠 수 있어, None으로
-            # 두면 실제로는 자동인데도 대시보드에 아무 표시등도 안 켜지는 문제가 있었다.
-            'auto_mode': True,
+            # joy_to_cmd_node가 항상 수동 모드로 시작하므로(joy_to_cmd_node.py 참고) 기본값을
+            # False로 맞춰둔다 - /actuator/auto_mode가 volatile QoS라 joy_to_cmd_node의 시작 시
+            # 발행을 GCS가 늦게 구독 시작하면 놓칠 수 있어, None으로 두면 실제로는 수동인데도
+            # 대시보드에 아무 표시등도 안 켜지는 문제가 있었다.
+            'auto_mode': False,
         }
 
         self.create_subscription(String, '/water_quality/data', self.on_water_quality, 10)

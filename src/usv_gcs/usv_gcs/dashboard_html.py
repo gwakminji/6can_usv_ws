@@ -169,17 +169,10 @@ const gpsBounds = {
     maxLng: 126.6400
 };
 
-function convertGpsToPixel(lat, lng) {
-    let x = ((lng - gpsBounds.minLng) / (gpsBounds.maxLng - gpsBounds.minLng)) * mapWidth;
-    let y = (1.0 - (lat - gpsBounds.minLat) / (gpsBounds.maxLat - gpsBounds.minLat)) * mapHeight;
-
-    return {
-        x: Math.max(30, Math.min(mapWidth - 30, x)),
-        y: Math.max(30, Math.min(mapHeight - 30, y))
-    };
-}
-
-let isGpsReceived = false;
+// 실제 수신된 위/경도 (표시 전용 - 게임 속 보트 위치엔 더 이상 반영하지 않음). 아직
+// 못 받았으면 null로 두고 화면엔 "-"로 표시한다.
+let lastGpsLat = null;
+let lastGpsLng = null;
 
 // --- [미니맵] 구글 정적맵 위성 사진 위에 실제 GPS 좌표를 표시 ---
 // 키는 여기 직접 안 넣는다 - gui_main_node.py가 config/gcs_secrets.yaml(git에는
@@ -226,14 +219,14 @@ async function refreshState() {
         banner.style.display = (s.gps_has_fix === false) ? 'block' : 'none';
 
         if (s.gps_fix) {
-            let pos = convertGpsToPixel(s.gps_fix.latitude, s.gps_fix.longitude);
-            targetX = pos.x;
-            targetY = pos.y;
+            // 게임 속 보트 위치(targetX/Y)는 실제 GPS로 옮기지 않는다 - 호수/물고기/쓰레기가
+            // 고정된 가상의 맵이라, 실제 좌표를 그대로 매핑하면 그 맵 밖으로 보트가 튕겨나가
+            // (화면 구석에 있는 미니맵 HUD 뒤에 가려져) "안 보이는" 것처럼 됐다. 보트는
+            // 원래 초기 위치를 유지한 채 조이스틱으로만 움직이고, 실제 위/경도는 미니맵
+            // 위성 이미지 중심과 아래 텍스트 표시에만 쓴다.
+            lastGpsLat = s.gps_fix.latitude;
+            lastGpsLng = s.gps_fix.longitude;
             updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
-            if (!isGpsReceived) {
-                isGpsReceived = true;
-                console.log("🛰️ 첫 GPS 좌표 수신 완료!");
-            }
         }
 
         if (s.cmd_vel) {
@@ -399,7 +392,6 @@ function startGame() {
     ownedSpecialFishes = { witch: 0, ghost: 0, santa: 0, pumpkin: 0 };
     targetX = mapWidth / 2;
     targetY = mapHeight / 2;
-    isGpsReceived = false;
     fishes = [];
     monsters = [];
     for (let i = 0; i < fishCount; i++) spawnRandomNormalFish();
@@ -769,14 +761,12 @@ function mainLoop() {
                 boatSpriteIndex = 14; // 좌상
             }
 
-            // GPS 미수신 시 dead-reckoning 폴백: 조이스틱 입력 방향으로 화면상 위치를 직접 이동
-            // (GPS가 들어오는 순간 refreshState()가 targetX/Y를 덮어써서 자연히 GPS 기준으로 전환됨)
-            if (!isGpsReceived) {
-                let speed = 3.5; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0에서 낮춤)
-                let len = Math.hypot(dx, dy);
-                targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
-                targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
-            }
+            // 조이스틱 입력 방향으로 화면상 위치를 직접 이동 (게임 속 가상의 맵이라 실제
+            // GPS 좌표는 이 위치에 반영하지 않는다 - 위 refreshState()의 gps_fix 처리 참고)
+            let speed = 3.5; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0에서 낮춤)
+            let len = Math.hypot(dx, dy);
+            targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
+            targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
         }
 
         // 사이드바(HUD)는 캔버스 우측 230px 고정, 나머지가 호수(플레이 뷰포트) 폭.
@@ -1089,7 +1079,10 @@ function mainLoop() {
 
         ctx.fillStyle = "#55ff55";
         ctx.font = "bold 9px 'Courier New'";
-        ctx.fillText(`X: ${Math.floor(targetX)}, Y: ${Math.floor(targetY)}`, 80, 162);
+        const latText = lastGpsLat !== null ? lastGpsLat.toFixed(5) : "-";
+        const lngText = lastGpsLng !== null ? lastGpsLng.toFixed(5) : "-";
+        ctx.fillText(`위도: ${latText}`, 80, 158);
+        ctx.fillText(`경도: ${lngText}`, 80, 168);
 
         // 8. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
         const lakeCenterX = lakeWidth / 2;
