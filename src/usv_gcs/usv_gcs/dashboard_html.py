@@ -159,15 +159,9 @@ if (SHOW_CAMERA && cameraHost) {
 // --- [자동 제어] 펌프와 마찬가지로 joy_to_cmd_node가 조이스틱 버튼으로 직접
 // /actuator/auto_mode를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
 
-// --- [GPS] 위경도를 캔버스 픽셀 좌표로 변환 ---
-// 📍 송도 센트럴파크 기준 위경도 범위 설정 - GPS 수신 전 기본 위치(및 미니맵)가
-// 실제로 존재하는 장소를 가리키도록 여기 좌표로 잡았다.
-const gpsBounds = {
-    minLat: 37.3888,
-    maxLat: 37.3908,
-    minLng: 126.6380,
-    maxLng: 126.6400
-};
+// --- [GPS] 실제 GPS 수신 전 미니맵 기본 중심 좌표 (테스트 스폰 위치) ---
+const DEFAULT_LAT = 37.3941575;
+const DEFAULT_LNG = 126.6311434;
 
 // 실제 수신된 위/경도 (표시 전용 - 게임 속 보트 위치엔 더 이상 반영하지 않음). 아직
 // 못 받았으면 null로 두고 화면엔 "-"로 표시한다.
@@ -181,8 +175,8 @@ let lastGpsLng = null;
 // 크래시 아님). README "Google Maps API 키 설정" 참고.
 const googleApiKey = "__GOOGLE_MAPS_API_KEY__";
 const miniMapImg = new Image();
-let currentLat = (gpsBounds.minLat + gpsBounds.maxLat) / 2;
-let currentLng = (gpsBounds.minLng + gpsBounds.maxLng) / 2;
+let currentLat = DEFAULT_LAT;
+let currentLng = DEFAULT_LNG;
 
 function updateMiniMapUrl(lat, lng) {
     currentLat = lat ?? currentLat;
@@ -1058,17 +1052,13 @@ function mainLoop() {
             ctx.fillRect(15, 15, 130, 137);
         }
 
-        monsters.forEach(m => {
-            let mxMini = 15 + (m.x / mapWidth) * 130;
-            let myMini = 15 + (m.y / mapHeight) * 137;
-            ctx.fillStyle = "#ff4757";
-            ctx.beginPath();
-            ctx.arc(mxMini, myMini, 2, 0, Math.PI * 2);
-            ctx.fill();
-        });
+        // 쓰레기 몬스터는 가상의 게임 맵 좌표만 갖고 있어서(실제 GPS 좌표가 없음) 실제
+        // 위성사진 위에는 찍지 않는다 - 찍으면 서로 다른 좌표계라 위치가 안 맞는다.
 
-        let bxMini = 15 + (targetX / mapWidth) * 130;
-        let byMini = 15 + (targetY / mapHeight) * 137;
+        // 보트 점: 위성사진 자체가 항상 "보트의 마지막 GPS 위치"를 중심으로 다시
+        // 요청되므로(updateMiniMapUrl), 보트는 항상 미니맵 정중앙에 찍으면 된다.
+        let bxMini = 15 + 130 / 2;
+        let byMini = 15 + 137 / 2;
         ctx.fillStyle = "#38bdf8";
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1;
