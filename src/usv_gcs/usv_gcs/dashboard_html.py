@@ -159,24 +159,35 @@ if (SHOW_CAMERA && cameraHost) {
 // --- [자동 제어] 펌프와 마찬가지로 joy_to_cmd_node가 조이스틱 버튼으로 직접
 // /actuator/auto_mode를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
 
-// --- [GPS] 실제 GPS 수신 전 미니맵 기본 중심 좌표 (테스트 스폰 위치) ---
-const DEFAULT_LAT = 37.3941575;
-const DEFAULT_LNG = 126.6311434;
+// --- [GPS] 위경도를 캔버스 픽셀 좌표로 변환 ---
+// 📍 송도 센트럴파크 기준 위경도 범위 설정 - GPS 수신 전 기본 위치(및 미니맵)가
+// 실제로 존재하는 장소를 가리키도록 여기 좌표로 잡았다.
+const gpsBounds = {
+    minLat: 37.3888,
+    maxLat: 37.3908,
+    minLng: 126.6380,
+    maxLng: 126.6400
+};
 
-// 실제 수신된 위/경도 (표시 전용 - 게임 속 보트 위치엔 더 이상 반영하지 않음). 아직
-// 못 받았으면 null로 두고 화면엔 "-"로 표시한다.
-let lastGpsLat = null;
-let lastGpsLng = null;
+function convertGpsToPixel(lat, lng) {
+    let x = ((lng - gpsBounds.minLng) / (gpsBounds.maxLng - gpsBounds.minLng)) * mapWidth;
+    let y = (1.0 - (lat - gpsBounds.minLat) / (gpsBounds.maxLat - gpsBounds.minLat)) * mapHeight;
+
+    return {
+        x: Math.max(30, Math.min(mapWidth - 30, x)),
+        y: Math.max(30, Math.min(mapHeight - 30, y))
+    };
+}
+
+let isGpsReceived = false;
 
 // --- [미니맵] 구글 정적맵 위성 사진 위에 실제 GPS 좌표를 표시 ---
-// 키는 여기 직접 안 넣는다 - gui_main_node.py가 config/gcs_secrets.yaml(git에는
-// 안 올라가는 파일, .gitignore 참고)에서 읽어서 이 자리에 주입한다. 키가 없거나
-// 이미지 로드에 실패하면 미니맵 자리는 파란 박스로 대체된다(1063행 근처, 정상 동작 -
-// 크래시 아님). README "Google Maps API 키 설정" 참고.
-const googleApiKey = "__GOOGLE_MAPS_API_KEY__";
+// TODO: 구글 맵 Static API 키 채워넣기. 저장소가 public이라 여기 직접 커밋하지 말 것
+// (팀 키 사용 여부/도메인 제한 확인 후 배포 환경에서만 주입 권장).
+const googleApiKey = "";
 const miniMapImg = new Image();
-let currentLat = DEFAULT_LAT;
-let currentLng = DEFAULT_LNG;
+let currentLat = (gpsBounds.minLat + gpsBounds.maxLat) / 2;
+let currentLng = (gpsBounds.minLng + gpsBounds.maxLng) / 2;
 
 function updateMiniMapUrl(lat, lng) {
     currentLat = lat ?? currentLat;
@@ -213,14 +224,14 @@ async function refreshState() {
         banner.style.display = (s.gps_has_fix === false) ? 'block' : 'none';
 
         if (s.gps_fix) {
-            // 게임 속 보트 위치(targetX/Y)는 실제 GPS로 옮기지 않는다 - 호수/물고기/쓰레기가
-            // 고정된 가상의 맵이라, 실제 좌표를 그대로 매핑하면 그 맵 밖으로 보트가 튕겨나가
-            // (화면 구석에 있는 미니맵 HUD 뒤에 가려져) "안 보이는" 것처럼 됐다. 보트는
-            // 원래 초기 위치를 유지한 채 조이스틱으로만 움직이고, 실제 위/경도는 미니맵
-            // 위성 이미지 중심과 아래 텍스트 표시에만 쓴다.
-            lastGpsLat = s.gps_fix.latitude;
-            lastGpsLng = s.gps_fix.longitude;
+            let pos = convertGpsToPixel(s.gps_fix.latitude, s.gps_fix.longitude);
+            targetX = pos.x;
+            targetY = pos.y;
             updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
+            if (!isGpsReceived) {
+                isGpsReceived = true;
+                console.log("🛰️ 첫 GPS 좌표 수신 완료!");
+            }
         }
 
         if (s.cmd_vel) {
@@ -294,11 +305,40 @@ assets.green.src = "green.png";
 assets.yellow.src = "yellow.png";
 assets.red.src = "red.png";
 
+// 🎵 오디오 관리
+const bgm = {
+    main: new Audio("bgm_main.mp3"),
+    game: new Audio("bgm_game.mp3"),
+    ending: new Audio("bgm_ending.mp3")
+};
+Object.values(bgm).forEach(b => { b.loop = true; b.volume = 0.5; });
+
+const sfx = {
+    coin: new Audio("sfx_coin.wav"),
+    gacha: new Audio("sfx_gacha.wav"),
+    nogold: new Audio("sfx_nogold.wav"),
+    trash: new Audio("sfx_trash.wav"),
+    pump: new Audio("sfx_pump.wav")
+};
+sfx.pump.loop = true;  // 펌프는 누르는 동안 계속 반복
+Object.values(sfx).forEach(s => { s.volume = 0.7; });
+
+let currentBgm = null;
+function playBgm(key) {
+    if (currentBgm) { currentBgm.pause(); currentBgm.currentTime = 0; }
+    currentBgm = bgm[key];
+    currentBgm.play().catch(() => {});
+}
+function playSfx(key) {
+    sfx[key].currentTime = 0;
+    sfx[key].play().catch(() => {});
+}
+
 // 게임 상태 관리 ("main" 또는 "game" 또는 "ending")
 let gameState = "main";
 
 // 게임 변수들
-let initialTime = 90;
+let initialTime = 60;  // 게임 시간 90초 -> 60초 변경
 let timeLeft = initialTime;
 let targetScore = 10000;
 let isGameOver = false;
@@ -371,12 +411,21 @@ canvas.addEventListener("click", (e) => {
     } else if (gameState === "ending") {
         if (x >= 260 && x <= 540 && y >= 480 && y <= 540) {
             gameState = "main";
+            playBgm("main");
         }
     }
 });
 
+// 메인화면 BGM - 브라우저 정책상 첫 클릭 이후에만 재생 가능
+document.addEventListener("click", () => {
+    if (gameState === "main" && (!currentBgm || currentBgm.paused)) {
+        playBgm("main");
+    }
+}, { once: true });
+
 function startGame() {
     gameState = "game";
+    playBgm("game");
     timeLeft = initialTime;
     score = 0;
     gold = 300;
@@ -386,6 +435,7 @@ function startGame() {
     ownedSpecialFishes = { witch: 0, ghost: 0, santa: 0, pumpkin: 0 };
     targetX = mapWidth / 2;
     targetY = mapHeight / 2;
+    isGpsReceived = false;
     fishes = [];
     monsters = [];
     for (let i = 0; i < fishCount; i++) spawnRandomNormalFish();
@@ -451,10 +501,12 @@ function rollGachaFish() {
     if (activeCardShown) return; // 카드 팝업이 떠 있는 동안은 중복 뽑기 방지
 
     if (gold < GACHA_COST) {
+        playSfx("nogold");
         showInGameMessage(`❌ 골드가 부족합니다! (필요: ${GACHA_COST}G)`);
         return;
     }
     gold -= GACHA_COST;
+    playSfx("gacha");
 
     const keys = Object.keys(specialFishTemplates);
     const totalChance = keys.reduce((sum, k) => sum + specialFishTemplates[k].chance, 0);
@@ -517,12 +569,16 @@ setInterval(() => {
 
     if (score >= targetScore) {
         gameState = "ending";
+        playBgm("ending");
+        sfx.pump.pause(); sfx.pump.currentTime = 0;
         return;
     }
 
     if (timeLeft <= 0) {
         isGameOver = true;
         gameState = "ending";
+        playBgm("ending");
+        sfx.pump.pause(); sfx.pump.currentTime = 0;
         return;
     }
 
@@ -545,10 +601,10 @@ setInterval(() => {
 
     waterQuality = Math.max(0.0, Math.min(maxWaterQuality, waterQuality));
 
-    monsterSpawnTimer++;
-    if (monsterSpawnTimer >= 6) {
+    monsterSpawnTimer++;   
+    if (monsterSpawnTimer >= 3) {   // 몬스터 스폰 주기 6초 -> 3초로 변경
         monsterSpawnTimer = 0;
-        if (monsters.length < 15) spawnMonster();
+        if (monsters.length < 25) spawnMonster();  // 게임 내 쓰레기 최대 수 15 -> 25
     }
 
     let ghostCount = ownedSpecialFishes.ghost;
@@ -675,6 +731,7 @@ function pollGamepadForBack() {
 
     if (pressed && !prevBackButtonPressed) {
         gameState = "main"; // 누르는 순간(edge)에만 1회 실행
+        playBgm("main");
     }
     prevBackButtonPressed = pressed;
 }
@@ -717,6 +774,12 @@ function mainLoop() {
         ctx.fillStyle = "white";
         ctx.font = "bold 16px '맑은 고딕'";
         ctx.fillText("게임 화면 시작", 400, 230);
+
+        // START 안내 텍스트
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "13px '맑은 고딕'";
+        ctx.fillText("[START] 버튼을 눌러 게임을 시작하세요!", 400, 290);
+
         ctx.textAlign = "left";
 
     } else if (gameState === "game") {
@@ -755,12 +818,14 @@ function mainLoop() {
                 boatSpriteIndex = 14; // 좌상
             }
 
-            // 조이스틱 입력 방향으로 화면상 위치를 직접 이동 (게임 속 가상의 맵이라 실제
-            // GPS 좌표는 이 위치에 반영하지 않는다 - 위 refreshState()의 gps_fix 처리 참고)
-            let speed = 3.5; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0에서 낮춤)
-            let len = Math.hypot(dx, dy);
-            targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
-            targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
+            // GPS 미수신 시 dead-reckoning 폴백: 조이스틱 입력 방향으로 화면상 위치를 직접 이동
+            // (GPS가 들어오는 순간 refreshState()가 targetX/Y를 덮어써서 자연히 GPS 기준으로 전환됨)
+            if (!isGpsReceived) {
+                let speed = 3.5; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0에서 낮춤)
+                let len = Math.hypot(dx, dy);
+                targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
+                targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
+            }
         }
 
         // 사이드바(HUD)는 캔버스 우측 230px 고정, 나머지가 호수(플레이 뷰포트) 폭.
@@ -830,13 +895,21 @@ function mainLoop() {
                         if (idx > -1) monsters.splice(idx, 1);
                         let reward = Math.floor(Math.random() * 16) + 15;
                         gold += reward;
+                        playSfx("trash");
+                        playSfx("coin");
                         showInGameMessage(`✨ 쓰레기 수거 성공! (+${reward}G)`);
                     }
                 }
             }
         });
 
-        // 4. 물대포 이펙트
+        // 4. 물대포 이펙트 + 펌프 소리
+        if (isPumping) {
+            if (sfx.pump.paused) sfx.pump.play().catch(() => {});
+        } else {
+            sfx.pump.pause(); sfx.pump.currentTime = 0;
+        }
+
         if (isPumping) {
             ctx.save();
             ctx.translate(beamWorldX - cameraX, beamWorldY - cameraY);
@@ -1052,13 +1125,17 @@ function mainLoop() {
             ctx.fillRect(15, 15, 130, 137);
         }
 
-        // 쓰레기 몬스터는 가상의 게임 맵 좌표만 갖고 있어서(실제 GPS 좌표가 없음) 실제
-        // 위성사진 위에는 찍지 않는다 - 찍으면 서로 다른 좌표계라 위치가 안 맞는다.
+        monsters.forEach(m => {
+            let mxMini = 15 + (m.x / mapWidth) * 130;
+            let myMini = 15 + (m.y / mapHeight) * 137;
+            ctx.fillStyle = "#ff4757";
+            ctx.beginPath();
+            ctx.arc(mxMini, myMini, 2, 0, Math.PI * 2);
+            ctx.fill();
+        });
 
-        // 보트 점: 위성사진 자체가 항상 "보트의 마지막 GPS 위치"를 중심으로 다시
-        // 요청되므로(updateMiniMapUrl), 보트는 항상 미니맵 정중앙에 찍으면 된다.
-        let bxMini = 15 + 130 / 2;
-        let byMini = 15 + 137 / 2;
+        let bxMini = 15 + (targetX / mapWidth) * 130;
+        let byMini = 15 + (targetY / mapHeight) * 137;
         ctx.fillStyle = "#38bdf8";
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1;
@@ -1069,10 +1146,7 @@ function mainLoop() {
 
         ctx.fillStyle = "#55ff55";
         ctx.font = "bold 9px 'Courier New'";
-        const latText = lastGpsLat !== null ? lastGpsLat.toFixed(5) : "-";
-        const lngText = lastGpsLng !== null ? lastGpsLng.toFixed(5) : "-";
-        ctx.fillText(`위도: ${latText}`, 80, 158);
-        ctx.fillText(`경도: ${lngText}`, 80, 168);
+        ctx.fillText(`X: ${Math.floor(targetX)}, Y: ${Math.floor(targetY)}`, 80, 162);
 
         // 8. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
         const lakeCenterX = lakeWidth / 2;
@@ -1087,6 +1161,36 @@ function mainLoop() {
             ctx.font = "bold 12px '맑은 고딕'";
             ctx.fillText(notificationText, lakeCenterX, 545);
         }
+
+        // 8-1. 퀘스트 안내 텍스트 (좌측 하단)
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(10, 390, 145, 200);
+        ctx.strokeStyle = "#ffd166";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(10, 390, 145, 200);
+
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 10px '맑은 고딕'";
+        ctx.textAlign = "left";
+        ctx.fillText("[퀘스트 1] 푸른 호수 클리어!", 15, 408);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "9px '맑은 고딕'";
+        ctx.fillText("목표: [B]펌프 모드 변경 후", 15, 424);
+        ctx.fillText("[A]눌러 펌프 작동→쓰레기 제거!", 15, 438);
+        ctx.fillStyle = "#2ed573";
+        ctx.fillText("보상: 친환경 점수 + 코인 획득", 15, 452);
+
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 10px '맑은 고딕'";
+        ctx.fillText("[퀘스트 2] 동료를 찾아라!", 15, 472);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "9px '맑은 고딕'";
+        ctx.fillText("목표: [X]눌러 코인으로", 15, 488);
+        ctx.fillText("랜덤 물고기 뽑기!", 15, 502);
+        ctx.fillStyle = "#2ed573";
+        ctx.fillText("보상: 물고기마다 보너스 점수", 15, 516);
+
+        ctx.textAlign = "center";
 
         // 9. 특별 물고기 영입 카드 팝업
         if (activeCardShown && activeCardKey) {
@@ -1176,6 +1280,13 @@ function mainLoop() {
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 15px '맑은 고딕'";
         ctx.fillText("🏠 메인 화면으로 돌아가기", 400, 517);
+
+        // BACK 안내 텍스트 (우측 하단)
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "11px '맑은 고딕'";
+        ctx.textAlign = "right";
+        ctx.fillText("[BACK] 메인화면", 790, 585);
+
         ctx.textAlign = "left";
     }
 
