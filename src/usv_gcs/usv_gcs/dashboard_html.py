@@ -370,6 +370,7 @@ let monsters = [];
 let monsterSpawnTimer = 0;
 let activeCardShown = false;
 let activeCardKey = null;
+let cardHideTimer = null;
 let notificationText = "";
 let notificationTimer = null;
 
@@ -465,13 +466,21 @@ function spawnSpecialFish(fishKey) {
 }
 
 function spawnMonster() {
-    let garbageImgs = [assets.garbage1, assets.garbage2, assets.garbageSmall1, assets.garbageSmall2, assets.garbageSmall3];
-    let chosenImg = garbageImgs[Math.floor(Math.random() * garbageImgs.length)];
+    let isLarge = Math.random() < 0.25; // 큰 쓰레기 25% 확률로 등장
+    let chosenImg;
+    if (isLarge) {
+        let largeImgs = [assets.garbage1, assets.garbage2];
+        chosenImg = largeImgs[Math.floor(Math.random() * largeImgs.length)];
+    } else {
+        let smallImgs = [assets.garbageSmall1, assets.garbageSmall2, assets.garbageSmall3];
+        chosenImg = smallImgs[Math.floor(Math.random() * smallImgs.length)];
+    }
     monsters.push({
         x: Math.random() * (mapWidth - 200) + 100,
         y: Math.random() * (mapHeight - 200) + 100,
         photo: chosenImg,
-        hp: 3
+        hp: 3,
+        isLarge: isLarge
     });
 }
 
@@ -486,7 +495,8 @@ function showInGameMessage(text) {
 function showFishCardPopup(fishKey) {
     activeCardShown = true;
     activeCardKey = fishKey;
-    setTimeout(() => {
+    if (cardHideTimer) clearTimeout(cardHideTimer);
+    cardHideTimer = setTimeout(() => {
         hideFishCardPopup();
     }, 1500);
 }
@@ -498,8 +508,6 @@ function hideFishCardPopup() {
 // 조이스틱 버튼 하나로 실행되는 랜덤 뽑기. 4개 물고기 중 하나를 chance(%) 가중치로
 // 추첨한다 - 값이 좋은 물고기(pumpkin 등)일수록 chance가 낮게 설정되어 있어 잘 안 나온다.
 function rollGachaFish() {
-    if (activeCardShown) return; // 카드 팝업이 떠 있는 동안은 중복 뽑기 방지
-
     if (gold < GACHA_COST) {
         playSfx("nogold");
         showInGameMessage(`❌ 골드가 부족합니다! (필요: ${GACHA_COST}G)`);
@@ -875,14 +883,16 @@ function mainLoop() {
         let beamWorldY = targetY + Math.sin(boatAngle) * 85;
 
         monsters.forEach(m => {
+            let size = m.isLarge ? 44 : 28;
+            let half = size / 2;
             let mx = m.x - cameraX;
             let my = m.y - cameraY;
             if (mx >= -30 && mx <= lakeWidth + 30 && my >= -30 && my <= 630) {
                 if (m.photo.complete && m.photo.naturalWidth !== 0) {
-                    ctx.drawImage(m.photo, mx - 14, my - 14, 28, 28);
+                    ctx.drawImage(m.photo, mx - half, my - half, size, size);
                 } else {
                     ctx.fillStyle = "#888";
-                    ctx.fillRect(mx - 14, my - 14, 28, 28);
+                    ctx.fillRect(mx - half, my - half, size, size);
                 }
             }
 
@@ -893,11 +903,13 @@ function mainLoop() {
                     if (m.hp <= 0) {
                         let idx = monsters.indexOf(m);
                         if (idx > -1) monsters.splice(idx, 1);
-                        let reward = Math.floor(Math.random() * 16) + 15;
+                        let reward = m.isLarge
+                            ? Math.floor(Math.random() * 31) + 60  // 큰 쓰레기는 보상도 더 크게 (60~90G)
+                            : Math.floor(Math.random() * 16) + 15;
                         gold += reward;
                         playSfx("trash");
                         playSfx("coin");
-                        showInGameMessage(`✨ 쓰레기 수거 성공! (+${reward}G)`);
+                        showInGameMessage(m.isLarge ? `✨ 큰 쓰레기 수거 성공! (+${reward}G)` : `✨ 쓰레기 수거 성공! (+${reward}G)`);
                     }
                 }
             }
@@ -1164,31 +1176,31 @@ function mainLoop() {
 
         // 8-1. 퀘스트 안내 텍스트 (좌측 하단)
         ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(10, 390, 145, 200);
+        ctx.fillRect(10, 390, 145, 148);
         ctx.strokeStyle = "#ffd166";
         ctx.lineWidth = 1;
-        ctx.strokeRect(10, 390, 145, 200);
+        ctx.strokeRect(10, 390, 145, 148);
 
         ctx.fillStyle = "#ffd166";
-        ctx.font = "bold 10px '맑은 고딕'";
+        ctx.font = "bold 11px '맑은 고딕'";
         ctx.textAlign = "left";
         ctx.fillText("[퀘스트 1] 푸른 호수 클리어!", 15, 408);
         ctx.fillStyle = "#ffffff";
-        ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("목표: [B]펌프 모드 변경 후", 15, 424);
-        ctx.fillText("[A]눌러 펌프 작동→쓰레기 제거!", 15, 438);
+        ctx.font = "10px '맑은 고딕'";
+        ctx.fillText("목표: [B]펌프 모드 변경 후", 15, 425);
+        ctx.fillText("[A]눌러 펌프 작동→쓰레기 제거!", 15, 440);
         ctx.fillStyle = "#2ed573";
-        ctx.fillText("보상: 친환경 점수 + 코인 획득", 15, 452);
+        ctx.fillText("보상: 친환경 점수 + 코인 획득", 15, 455);
 
         ctx.fillStyle = "#ffd166";
-        ctx.font = "bold 10px '맑은 고딕'";
-        ctx.fillText("[퀘스트 2] 동료를 찾아라!", 15, 472);
+        ctx.font = "bold 11px '맑은 고딕'";
+        ctx.fillText("[퀘스트 2] 동료를 찾아라!", 15, 475);
         ctx.fillStyle = "#ffffff";
-        ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("목표: [X]눌러 코인으로", 15, 488);
-        ctx.fillText("랜덤 물고기 뽑기!", 15, 502);
+        ctx.font = "10px '맑은 고딕'";
+        ctx.fillText("목표: [X]눌러 코인으로", 15, 492);
+        ctx.fillText("랜덤 물고기 뽑기!", 15, 507);
         ctx.fillStyle = "#2ed573";
-        ctx.fillText("보상: 물고기마다 보너스 점수", 15, 516);
+        ctx.fillText("보상: 물고기마다 보너스 점수", 15, 522);
 
         ctx.textAlign = "center";
 
