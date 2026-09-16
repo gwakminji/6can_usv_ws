@@ -294,11 +294,40 @@ assets.green.src = "green.png";
 assets.yellow.src = "yellow.png";
 assets.red.src = "red.png";
 
+// 🎵 오디오 관리
+const bgm = {
+    main: new Audio("bgm_main.mp3"),
+    game: new Audio("bgm_game.mp3"),
+    ending: new Audio("bgm_ending.mp3")
+};
+Object.values(bgm).forEach(b => { b.loop = true; b.volume = 0.5; });
+
+const sfx = {
+    coin: new Audio("sfx_coin.wav"),
+    gacha: new Audio("sfx_gacha.wav"),
+    nogold: new Audio("sfx_nogold.wav"),
+    trash: new Audio("sfx_trash.wav"),
+    pump: new Audio("sfx_pump.wav")
+};
+sfx.pump.loop = true;  // 펌프는 누르는 동안 계속 반복
+Object.values(sfx).forEach(s => { s.volume = 0.7; });
+
+let currentBgm = null;
+function playBgm(key) {
+    if (currentBgm) { currentBgm.pause(); currentBgm.currentTime = 0; }
+    currentBgm = bgm[key];
+    currentBgm.play().catch(() => {});
+}
+function playSfx(key) {
+    sfx[key].currentTime = 0;
+    sfx[key].play().catch(() => {});
+}
+
 // 게임 상태 관리 ("main" 또는 "game" 또는 "ending")
 let gameState = "main";
 
 // 게임 변수들
-let initialTime = 90;
+let initialTime = 60;  // 게임 시간 90초 -> 60초 변경
 let timeLeft = initialTime;
 let targetScore = 10000;
 let isGameOver = false;
@@ -371,12 +400,21 @@ canvas.addEventListener("click", (e) => {
     } else if (gameState === "ending") {
         if (x >= 260 && x <= 540 && y >= 480 && y <= 540) {
             gameState = "main";
+            playBgm("main");
         }
     }
 });
 
+// 메인화면 BGM - 브라우저 정책상 첫 클릭 이후에만 재생 가능
+document.addEventListener("click", () => {
+    if (gameState === "main" && (!currentBgm || currentBgm.paused)) {
+        playBgm("main");
+    }
+}, { once: true });
+
 function startGame() {
     gameState = "game";
+    playBgm("game");
     timeLeft = initialTime;
     score = 0;
     gold = 300;
@@ -451,10 +489,12 @@ function rollGachaFish() {
     if (activeCardShown) return; // 카드 팝업이 떠 있는 동안은 중복 뽑기 방지
 
     if (gold < GACHA_COST) {
+        playSfx("nogold");
         showInGameMessage(`❌ 골드가 부족합니다! (필요: ${GACHA_COST}G)`);
         return;
     }
     gold -= GACHA_COST;
+    playSfx("gacha");
 
     const keys = Object.keys(specialFishTemplates);
     const totalChance = keys.reduce((sum, k) => sum + specialFishTemplates[k].chance, 0);
@@ -517,12 +557,16 @@ setInterval(() => {
 
     if (score >= targetScore) {
         gameState = "ending";
+        playBgm("ending");
+        sfx.pump.pause(); sfx.pump.currentTime = 0;
         return;
     }
 
     if (timeLeft <= 0) {
         isGameOver = true;
         gameState = "ending";
+        playBgm("ending");
+        sfx.pump.pause(); sfx.pump.currentTime = 0;
         return;
     }
 
@@ -546,9 +590,9 @@ setInterval(() => {
     waterQuality = Math.max(0.0, Math.min(maxWaterQuality, waterQuality));
 
     monsterSpawnTimer++;
-    if (monsterSpawnTimer >= 6) {
+    if (monsterSpawnTimer >= 3) {   // 몬스터 스폰 주기 6초 -> 3초로 변경
         monsterSpawnTimer = 0;
-        if (monsters.length < 15) spawnMonster();
+        if (monsters.length < 25) spawnMonster();  // 게임 내 쓰레기 최대 수 15 -> 25
     }
 
     let ghostCount = ownedSpecialFishes.ghost;
@@ -675,6 +719,7 @@ function pollGamepadForBack() {
 
     if (pressed && !prevBackButtonPressed) {
         gameState = "main"; // 누르는 순간(edge)에만 1회 실행
+        playBgm("main");
     }
     prevBackButtonPressed = pressed;
 }
@@ -830,13 +875,21 @@ function mainLoop() {
                         if (idx > -1) monsters.splice(idx, 1);
                         let reward = Math.floor(Math.random() * 16) + 15;
                         gold += reward;
+                        playSfx("trash");
+                        playSfx("coin");
                         showInGameMessage(`✨ 쓰레기 수거 성공! (+${reward}G)`);
                     }
                 }
             }
         });
 
-        // 4. 물대포 이펙트
+        // 4. 물대포 이펙트 + 펌프 소리
+        if (isPumping) {
+            if (sfx.pump.paused) sfx.pump.play().catch(() => {});
+        } else {
+            sfx.pump.pause(); sfx.pump.currentTime = 0;
+        }
+
         if (isPumping) {
             ctx.save();
             ctx.translate(beamWorldX - cameraX, beamWorldY - cameraY);
