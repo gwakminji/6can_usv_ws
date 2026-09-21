@@ -256,6 +256,10 @@ async function refreshState() {
             sensorWQ = s.water_quality;
         }
 
+        if (s.led_on !== null && s.led_on !== undefined) {
+            ledOn = s.led_on;
+        }
+
         batteryStatus = s.battery_status;
         if (s.battery_warning_pct !== undefined) batteryWarningPct = s.battery_warning_pct;
     } catch (e) {
@@ -265,6 +269,22 @@ async function refreshState() {
 setInterval(refreshState, 1000);
 refreshState();
 // -----------------------
+
+// --- [LED 토글] 미니맵 아래 버튼(마우스 클릭) 또는 조이스틱 X 버튼으로 실행. 펌프/auto_mode와
+// 달리 조이스틱이 아니라 이 화면이 직접 /api/led로 명령을 보내는 유일한 액추에이터라서
+// gui_main_node.py에 쓰기용 엔드포인트를 따로 뒀다. 캔버스 좌표는 draw 루프와 클릭
+// 핸들러가 같이 써야 해서 상수로 뺐다 (미니맵 10,10~150,175 바로 아래). ---
+const LED_TOGGLE_RECT = { x: 10, y: 180, w: 140, h: 50 };
+
+function toggleLed() {
+    const next = !ledOn;
+    ledOn = next; // 서버 응답(최대 1초) 기다리지 않고 먼저 반영 - refreshState()가 실제 값으로 보정
+    fetch('/api/led', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: next }),
+    }).catch((e) => console.error('LED 명령 전송 실패', e));
+}
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
@@ -412,6 +432,11 @@ let targetY = mapHeight / 2;
 let boatAngle = 0.0;
 let boatSpriteIndex = 0; // 스프라이트 프레임 번호 직접 지정
 let isPumping = false; // 조이스틱 버튼 -> /actuator/pump_cmd -> refreshState() 폴링으로 갱신됨
+// LED는 조이스틱이 아니라 이 화면(토글 클릭 또는 X 버튼)에서 명령을 보내는 유일한
+// 액추에이터라서 낙관적 갱신이 필요하다: POST 직후 서버 응답을 기다리지 않고 바로
+// 반전시켜 화면에 표시하고, 다음 refreshState() 폴링(최대 1초 뒤)이 실제 상태로 덮어쓴다.
+// null이면 아직 실제 상태를 한 번도 못 받은 것 - 토글을 회색으로 표시한다.
+let ledOn = null;
 
 let fishes = [];
 let monsters = [];
@@ -524,6 +549,11 @@ canvas.addEventListener("click", (e) => {
         const sidebarX = canvas.width - 230;
         if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 380 && y <= 416) {
             rollGachaFish();
+            return;
+        }
+        if (x >= LED_TOGGLE_RECT.x && x <= LED_TOGGLE_RECT.x + LED_TOGGLE_RECT.w
+            && y >= LED_TOGGLE_RECT.y && y <= LED_TOGGLE_RECT.y + LED_TOGGLE_RECT.h) {
+            toggleLed();
         }
     } else if (gameState === "ending") {
         // "[BACK] 메인화면" 텍스트(우측 하단, 790,585에 오른쪽 정렬로 찍힘) 자체를 클릭 영역으로 사용
@@ -790,10 +820,14 @@ function updateResponsiveCanvas() {
 }
 
 // --- [조이스틱 뽑기 버튼] 하드웨어 조이스틱 버튼이 물고기 4종을 개별로 고르기엔
-// 부족해서, 뽑기 자체를 버튼 하나(X)에 배정한다. ROS의 /joy 토픽과는 별개로 브라우저가
+// 부족해서, 뽑기 자체를 버튼 하나(Y)에 배정한다. ROS의 /joy 토픽과는 별개로 브라우저가
 // 직접 인식하는 HTML5 Gamepad API(navigator.getGamepads)를 사용한다 - 이벤트가 아니라
 // 매 프레임 폴링해야 버튼 상태를 읽을 수 있는 API라서 mainLoop 안에서 호출한다. ---
-const GACHA_GAMEPAD_BUTTON_INDEX = 3; // X 버튼 (실측 확인 완료)
+// X 버튼(인덱스 3)은 LED on/off로 옮겨져서, 뽑기는 Y 버튼으로 이동했다. 아래 인덱스는
+// 아직 실측 확인 전 추정치다 - 안 맞으면 브라우저 콘솔에서
+// navigator.getGamepads()[0].buttons를 찍어보고 Y를 누른 순간 pressed:true로 바뀌는
+// 인덱스를 찾아 이 숫자만 바꾸면 된다.
+const GACHA_GAMEPAD_BUTTON_INDEX = 2; // Y 버튼 (추정치 - 실측 필요)
 let prevGachaButtonPressed = false;
 
 function pollGamepadForGacha() {
@@ -811,6 +845,29 @@ function pollGamepadForGacha() {
         rollGachaFish(); // 버튼을 누르는 순간(edge)에만 1회 실행 - 누르고 있어도 연속 실행 안 됨
     }
     prevGachaButtonPressed = pressed;
+}
+
+// --- [조이스틱 LED 버튼] 미니맵 아래 LED 토글을 마우스로 누르는 대신 조이스틱 X 버튼으로도
+// 켜고 끌 수 있게 한다. 원래 뽑기가 쓰던 자리(인덱스 3)를 그대로 재사용 - 이 값은
+// 실측 확인이 이미 끝난 값이다. ---
+const LED_GAMEPAD_BUTTON_INDEX = 3; // X 버튼 (실측 확인 완료)
+let prevLedButtonPressed = false;
+
+function pollGamepadForLed() {
+    if (gameState !== "game" || activeCardShown) {
+        prevLedButtonPressed = false;
+        return;
+    }
+
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = pads[0];
+    const button = pad && pad.buttons[LED_GAMEPAD_BUTTON_INDEX];
+    const pressed = !!(button && button.pressed);
+
+    if (pressed && !prevLedButtonPressed) {
+        toggleLed(); // 버튼을 누르는 순간(edge)에만 1회 실행
+    }
+    prevLedButtonPressed = pressed;
 }
 
 // --- [조이스틱 게임 시작 버튼] 메인 화면에서 마우스로 START 안내 문구를 누르는 대신
@@ -864,6 +921,7 @@ function pollGamepadForBack() {
 let animTimer = 0;
 function mainLoop() {
     pollGamepadForGacha();
+    pollGamepadForLed();
     pollGamepadForStart();
     pollGamepadForBack();
     updateResponsiveCanvas();
@@ -1220,7 +1278,7 @@ function mainLoop() {
 
         ctx.fillStyle = "#a5a5a5";
         ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 X 버튼으로도 실행 가능)", sidebarX + 115, 430);
+        ctx.fillText("(조이스틱 Y 버튼으로도 실행 가능)", sidebarX + 115, 430);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 10px '맑은 고딕'";
@@ -1273,6 +1331,24 @@ function mainLoop() {
         ctx.font = "bold 9px 'Courier New'";
         ctx.fillText(`X: ${Math.floor(targetX)}, Y: ${Math.floor(targetY)}`, 80, 162);
 
+        // 7-1. LED on/off 토글 (미니맵 바로 아래) - 마우스 클릭(클릭 핸들러 참고) 또는
+        // 조이스틱 X 버튼(pollGamepadForLed)으로 실행. ledOn이 null이면 실제 상태를 아직
+        // 못 받은 것이라 회색으로 표시한다.
+        ctx.fillStyle = ledOn === null ? "#3a3a3a" : (ledOn ? "#2ed573" : "#555555");
+        ctx.strokeStyle = "#ffd166";
+        ctx.lineWidth = 2;
+        ctx.fillRect(LED_TOGGLE_RECT.x, LED_TOGGLE_RECT.y, LED_TOGGLE_RECT.w, LED_TOGGLE_RECT.h);
+        ctx.strokeRect(LED_TOGGLE_RECT.x, LED_TOGGLE_RECT.y, LED_TOGGLE_RECT.w, LED_TOGGLE_RECT.h);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 12px '맑은 고딕'";
+        const ledLabel = ledOn === null ? "💡 LED (--)" : `💡 LED (${ledOn ? "ON" : "OFF"})`;
+        ctx.fillText(ledLabel, LED_TOGGLE_RECT.x + LED_TOGGLE_RECT.w / 2, LED_TOGGLE_RECT.y + 22);
+
+        ctx.fillStyle = "#a5a5a5";
+        ctx.font = "9px '맑은 고딕'";
+        ctx.fillText("(조이스틱 X 버튼으로도 켜고 끌 수 있음)", LED_TOGGLE_RECT.x + LED_TOGGLE_RECT.w / 2, LED_TOGGLE_RECT.y + 40);
+
         // 8. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
         const lakeCenterX = lakeWidth / 2;
         if (notificationText !== "") {
@@ -1310,7 +1386,7 @@ function mainLoop() {
         ctx.fillText("[퀘스트 2] 동료를 찾아라!", 15, 475);
         ctx.fillStyle = "#ffffff";
         ctx.font = "10px '맑은 고딕'";
-        ctx.fillText("목표: [X]눌러 코인으로", 15, 492);
+        ctx.fillText("목표: [Y]눌러 코인으로", 15, 492);
         ctx.fillText("랜덤 물고기 뽑기!", 15, 507);
         ctx.fillStyle = "#2ed573";
         ctx.fillText("보상: 물고기마다 보너스 점수", 15, 522);

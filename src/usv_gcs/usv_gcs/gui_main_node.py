@@ -48,11 +48,12 @@ from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool
+from std_msgs.msg import ColorRGBA
 from std_msgs.msg import String
 
 from .dashboard_html import INDEX_HTML
@@ -87,6 +88,9 @@ class GuiMainNode(Node):
             # 발행을 GCS가 늦게 구독 시작하면 놓칠 수 있어, None으로 두면 실제로는 수동인데도
             # 대시보드에 아무 표시등도 안 켜지는 문제가 있었다.
             'auto_mode': False,
+            # actuator_driver_node가 /actuator/led_state로 실제 적용된 색을 발행하기 전까지는
+            # 알 방법이 없으므로 None(불명)으로 둔다 - 대시보드 토글은 None이면 회색으로 표시.
+            'led_on': None,
         }
 
         self.create_subscription(String, '/water_quality/data', self.on_water_quality, 10)
@@ -97,8 +101,17 @@ class GuiMainNode(Node):
         self.create_subscription(Bool, '/actuator/pump_cmd', self.on_pump_cmd, 10)
         self.create_subscription(Bool, '/actuator/pump_state', self.on_pump_state, 10)
         self.create_subscription(Bool, '/actuator/auto_mode', self.on_auto_mode, 10)
+        self.create_subscription(ColorRGBA, '/actuator/led_state', self.on_led_state, 10)
+        # 대시보드의 LED on/off 토글이 여기로 명령을 보낸다 (actuator_driver_node.py가 구독).
+        self.led_cmd_pub = self.create_publisher(ColorRGBA, '/actuator/led_cmd', 10)
 
         self.get_logger().info('GUI main node started')
+
+    def publish_led_cmd(self, on: bool):
+        msg = ColorRGBA()
+        msg.r = msg.g = msg.b = 1.0 if on else 0.0
+        msg.a = 1.0
+        self.led_cmd_pub.publish(msg)
 
     def on_water_quality(self, msg: String):
         try:
@@ -139,6 +152,10 @@ class GuiMainNode(Node):
     def on_auto_mode(self, msg: Bool):
         with self.state_lock:
             self.state['auto_mode'] = msg.data
+
+    def on_led_state(self, msg: ColorRGBA):
+        with self.state_lock:
+            self.state['led_on'] = msg.r > 0.0 or msg.g > 0.0 or msg.b > 0.0
 
     def snapshot(self):
         with self.state_lock:
@@ -258,6 +275,16 @@ def create_app(node: GuiMainNode) -> Flask:
         state = node.snapshot()
         state['battery_warning_pct'] = BATTERY_WARNING_PCT
         return jsonify(state)
+
+    # 대시보드의 LED on/off 토글 버튼(마우스 클릭 또는 조이스틱 X 버튼)이 호출한다.
+    # 펌프/auto_mode와 달리 LED는 조이스틱이 아니라 웹 화면에서 직접 명령을 보내는
+    # 유일한 액추에이터라서 여기 쓰기 가능한 엔드포인트가 필요했다.
+    @app.post('/api/led')
+    def api_led():
+        body = request.get_json(silent=True) or {}
+        on = bool(body.get('on'))
+        node.publish_led_cmd(on)
+        return jsonify({'ok': True, 'on': on})
 
     return app
 
