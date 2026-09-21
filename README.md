@@ -156,11 +156,12 @@ cd src/usv_actuators && ./start_actuators.sh
 # 3. GCS (관제) — 조이스틱 연결 후
 sudo apt install ros-jazzy-joy
 colcon build --symlink-install --packages-select usv_gcs
-source install/setup.bash
-ros2 launch usv_gcs gcs.launch.py camera_host:=<B1_IP>
+source install/setup.bash 혹은 sb
+ros2 launch usv_gcs gcs.launch.py 
 
 # 4. 브라우저에서 접속
-http://<GCS_IP>:8000
+http://<GCS_IP>:8000 혹은 http://localhost:8000
+
 ```
 
 B1/B2는 `install_*_autostart.sh`로 부팅 자동 실행을 등록해두면 이후엔 전원만 넣으면
