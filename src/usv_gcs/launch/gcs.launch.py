@@ -34,6 +34,9 @@ def generate_launch_description():
     linear_scale_arg = DeclareLaunchArgument('linear_scale', default_value='1.0')
     # 실측: 오른쪽으로 밀면 axes[0]=-1.0 이라서, 우회전 시 angular가 +가 되도록 부호 반전
     angular_scale_arg = DeclareLaunchArgument('angular_scale', default_value='-1.0')
+    # linear_ramp_rate/angular_ramp_rate는 여기 launch 인자로 안 둔다 - joy_to_cmd_node.py의
+    # declare_parameter 기본값이 유일한 조정 지점이다. 두 군데서 같이 관리하면 launch 쪽
+    # default_value가 항상 코드 쪽 값을 덮어써서 코드만 고치고 왜 안 바뀌나 헷갈리게 된다.
     pump_button_arg = DeclareLaunchArgument(
         'pump_button', default_value='0',
         description='펌프/워터캐논 작동 버튼 번호 (GCS 담당자가 실제 조이스틱 기준으로 확정)',

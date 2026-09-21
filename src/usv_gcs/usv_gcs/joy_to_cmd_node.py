@@ -19,6 +19,11 @@ class JoyToCmdNode(Node):
         # 실측: 오른쪽으로 밀면 axes[0]=-1.0 이라서, 우회전 시 angular가 +가 되도록 부호 반전
         self.declare_parameter('angular_scale', -1.0)   # rad/s
         self.declare_parameter('deadzone', 0.05)
+        # 조이스틱을 급격히 꺾어도 출력값이 즉시 튀지 않고 서서히 따라가도록 하는 램프
+        # 속도(초당 변화량). linear_scale/angular_scale이 만드는 최대값 기준 단위이므로,
+        # 예를 들어 linear_scale=1.0에 linear_ramp_rate=1.0이면 0->최대까지 약 1초 걸린다.
+        self.declare_parameter('linear_ramp_rate', 0.2)   # m/s^2
+        self.declare_parameter('angular_ramp_rate', 0.4)  # rad/s^2
         # 펌프/워터캐논 작동 버튼 번호. 조종은 조이스틱 하나로만 하므로여기서 발행한다. 
         # 0번(Xbox 계열 컨트롤러 기준 A 버튼)으로 확정. 
         # 실제 조이스틱에서 다르게 나오면 코드는 그대로 두고 pump_button 인자만 바꾸면 됨.
@@ -35,6 +40,8 @@ class JoyToCmdNode(Node):
         self.linear_scale = self.get_parameter('linear_scale').value
         self.angular_scale = self.get_parameter('angular_scale').value
         self.deadzone = self.get_parameter('deadzone').value
+        self.linear_ramp_rate = self.get_parameter('linear_ramp_rate').value
+        self.angular_ramp_rate = self.get_parameter('angular_ramp_rate').value
         self.pump_button = self.get_parameter('pump_button').value
         self.auto_button = self.get_parameter('auto_button').value
         self.enable_heartbeat = self.get_parameter('enable_heartbeat').value
@@ -55,6 +62,8 @@ class JoyToCmdNode(Node):
         self.auto_mode_pub = self.create_publisher(Bool, '/actuator/auto_mode', qos)
 
         self._last_joy_time = None
+        self.current_linear = 0.0
+        self.current_angular = 0.0
 
         # heartbeat: joy -> cmd_vel 경로가 살아있다는 신호. 발행 주체/주기는 아직 미확정이라
         # enable_heartbeat 파라미터로 켜고 끌 수 있게만 해둠 (기본 off).
@@ -76,8 +85,24 @@ class JoyToCmdNode(Node):
         auto_msg.data = self.auto_mode
         self.auto_mode_pub.publish(auto_msg)
 
+    @staticmethod
+    def _ramp(current: float, target: float, rate: float, dt: float) -> float:
+        """current를 target 방향으로 초당 rate만큼만 움직인다 (급변 방지)."""
+        if rate <= 0.0 or dt <= 0.0:
+            return target
+        max_step = rate * dt
+        diff = target - current
+        if diff > max_step:
+            return current + max_step
+        if diff < -max_step:
+            return current - max_step
+        return target
+
     def joy_callback(self, msg: Joy):
-        self._last_joy_time = self.get_clock().now()
+        now = self.get_clock().now()
+        # 첫 콜백이라 이전 시각이 없으면 dt=0 -> _ramp()가 그대로 target을 반환한다.
+        dt = (now - self._last_joy_time).nanoseconds / 1e9 if self._last_joy_time else 0.0
+        self._last_joy_time = now
 
         twist = Twist()
         linear = msg.axes[self.linear_axis] if len(msg.axes) > self.linear_axis else 0.0
@@ -88,8 +113,14 @@ class JoyToCmdNode(Node):
         if abs(angular) < self.deadzone:
             angular = 0.0
 
-        twist.linear.x = linear * self.linear_scale
-        twist.angular.z = angular * self.angular_scale
+        target_linear = linear * self.linear_scale
+        target_angular = angular * self.angular_scale
+
+        self.current_linear = self._ramp(self.current_linear, target_linear, self.linear_ramp_rate, dt)
+        self.current_angular = self._ramp(self.current_angular, target_angular, self.angular_ramp_rate, dt)
+
+        twist.linear.x = self.current_linear
+        twist.angular.z = self.current_angular
 
         self.cmd_pub.publish(twist)
 
