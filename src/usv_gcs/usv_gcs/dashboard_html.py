@@ -382,35 +382,6 @@ function playSfx(key) {
     sfx[key].play().catch(() => {});
 }
 
-// 🎵 오디오 관리
-const bgm = {
-    main: new Audio("bgm_main.mp3"),
-    game: new Audio("bgm_game.mp3"),
-    ending: new Audio("bgm_ending.mp3")
-};
-Object.values(bgm).forEach(b => { b.loop = true; b.volume = 0.5; });
-
-const sfx = {
-    coin: new Audio("sfx_coin.wav"),
-    gacha: new Audio("sfx_gacha.wav"),
-    nogold: new Audio("sfx_nogold.wav"),
-    trash: new Audio("sfx_trash.wav"),
-    pump: new Audio("sfx_pump.wav")
-};
-sfx.pump.loop = true;  // 펌프는 누르는 동안 계속 반복
-Object.values(sfx).forEach(s => { s.volume = 0.7; });
-
-let currentBgm = null;
-function playBgm(key) {
-    if (currentBgm) { currentBgm.pause(); currentBgm.currentTime = 0; }
-    currentBgm = bgm[key];
-    currentBgm.play().catch(() => {});
-}
-function playSfx(key) {
-    sfx[key].currentTime = 0;
-    sfx[key].play().catch(() => {});
-}
-
 // 게임 상태 관리 ("main" 또는 "game" 또는 "ending")
 let gameState = "main";
 
