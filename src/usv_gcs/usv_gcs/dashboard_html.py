@@ -159,24 +159,35 @@ if (SHOW_CAMERA && cameraHost) {
 // --- [자동 제어] 펌프와 마찬가지로 joy_to_cmd_node가 조이스틱 버튼으로 직접
 // /actuator/auto_mode를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
 
-// --- [GPS] 실제 GPS 수신 전 미니맵 기본 중심 좌표 (테스트 스폰 위치) ---
-const DEFAULT_LAT = 37.3941575;
-const DEFAULT_LNG = 126.6311434;
+// --- [GPS] 위경도를 캔버스 픽셀 좌표로 변환 ---
+// 📍 송도 센트럴파크 기준 위경도 범위 설정 - GPS 수신 전 기본 위치(및 미니맵)가
+// 실제로 존재하는 장소를 가리키도록 여기 좌표로 잡았다.
+const gpsBounds = {
+    minLat: 37.3888,
+    maxLat: 37.3908,
+    minLng: 126.6380,
+    maxLng: 126.6400
+};
 
-// 실제 수신된 위/경도 (표시 전용 - 게임 속 보트 위치엔 더 이상 반영하지 않음). 아직
-// 못 받았으면 null로 두고 화면엔 "-"로 표시한다.
-let lastGpsLat = null;
-let lastGpsLng = null;
+function convertGpsToPixel(lat, lng) {
+    let x = ((lng - gpsBounds.minLng) / (gpsBounds.maxLng - gpsBounds.minLng)) * mapWidth;
+    let y = (1.0 - (lat - gpsBounds.minLat) / (gpsBounds.maxLat - gpsBounds.minLat)) * mapHeight;
+
+    return {
+        x: Math.max(30, Math.min(mapWidth - 30, x)),
+        y: Math.max(30, Math.min(mapHeight - 30, y))
+    };
+}
+
+let isGpsReceived = false;
 
 // --- [미니맵] 구글 정적맵 위성 사진 위에 실제 GPS 좌표를 표시 ---
-// 키는 여기 직접 안 넣는다 - gui_main_node.py가 config/gcs_secrets.yaml(git에는
-// 안 올라가는 파일, .gitignore 참고)에서 읽어서 이 자리에 주입한다. 키가 없거나
-// 이미지 로드에 실패하면 미니맵 자리는 파란 박스로 대체된다(1063행 근처, 정상 동작 -
-// 크래시 아님). README "Google Maps API 키 설정" 참고.
-const googleApiKey = "__GOOGLE_MAPS_API_KEY__";
+// TODO: 구글 맵 Static API 키 채워넣기. 저장소가 public이라 여기 직접 커밋하지 말 것
+// (팀 키 사용 여부/도메인 제한 확인 후 배포 환경에서만 주입 권장).
+const googleApiKey = "";
 const miniMapImg = new Image();
-let currentLat = DEFAULT_LAT;
-let currentLng = DEFAULT_LNG;
+let currentLat = (gpsBounds.minLat + gpsBounds.maxLat) / 2;
+let currentLng = (gpsBounds.minLng + gpsBounds.maxLng) / 2;
 
 function updateMiniMapUrl(lat, lng) {
     currentLat = lat ?? currentLat;
@@ -213,14 +224,14 @@ async function refreshState() {
         banner.style.display = (s.gps_has_fix === false) ? 'block' : 'none';
 
         if (s.gps_fix) {
-            // 게임 속 보트 위치(targetX/Y)는 실제 GPS로 옮기지 않는다 - 호수/물고기/쓰레기가
-            // 고정된 가상의 맵이라, 실제 좌표를 그대로 매핑하면 그 맵 밖으로 보트가 튕겨나가
-            // (화면 구석에 있는 미니맵 HUD 뒤에 가려져) "안 보이는" 것처럼 됐다. 보트는
-            // 원래 초기 위치를 유지한 채 조이스틱으로만 움직이고, 실제 위/경도는 미니맵
-            // 위성 이미지 중심과 아래 텍스트 표시에만 쓴다.
-            lastGpsLat = s.gps_fix.latitude;
-            lastGpsLng = s.gps_fix.longitude;
+            let pos = convertGpsToPixel(s.gps_fix.latitude, s.gps_fix.longitude);
+            targetX = pos.x;
+            targetY = pos.y;
             updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
+            if (!isGpsReceived) {
+                isGpsReceived = true;
+                console.log("🛰️ 첫 GPS 좌표 수신 완료!");
+            }
         }
 
         if (s.cmd_vel) {
@@ -274,7 +285,10 @@ const assets = {
     waterArrow: new Image(),
     green: new Image(),
     yellow: new Image(),
-    red: new Image()
+    red: new Image(),
+    logoFacillity: new Image(),
+    logoInu: new Image(),
+    logoYouth: new Image()
 };
 
 // 이미지 파일명 매칭 설정
@@ -293,6 +307,80 @@ assets.waterArrow.src = "Water Arrow Preview.gif";
 assets.green.src = "green.png";
 assets.yellow.src = "yellow.png";
 assets.red.src = "red.png";
+assets.logoFacillity.src = "logo_facillity.png";
+assets.logoInu.src = "logo_inu.png";
+assets.logoYouth.src = "logo_youth.png";
+
+// 시작/엔딩 화면 우측 하단에 로고 3개를 원본 비율 유지한 채 가로로 나열해서 그린다.
+function drawCornerLogos(bottomY, rightMargin = 15) {
+    // 로고마다 원본 가로세로 비율이 달라서 카드 크기가 제각각이면 어중간해 보이므로,
+    // 흰 배경판의 폭(commonW)을 통일한다 - 세 로고 다 이 폭에 맞춰 자기 비율대로
+    // 높이만 알아서 정해진다. 카드 사이 간격(gap)도 최대한 좁힌다.
+    const commonW = 150;
+    const pad = 6;
+    const gap = 2;
+    // 인천대(logoInu)는 원본 비율상 세로가 유독 길어져서 카드 폭은 통일하되
+    // 로고 자체는 scale만큼 작게 그려서(카드 안에서 가운데 정렬) 세로 크기를 줄인다.
+    const items = [
+        { img: assets.logoFacillity, scale: 1 },
+        { img: assets.logoInu, scale: 0.75 },
+        { img: assets.logoYouth, scale: 1 }
+    ].map(({ img, scale }) => {
+        const ratio = (img.complete && img.naturalWidth && img.naturalHeight)
+            ? img.naturalWidth / img.naturalHeight
+            : 0;
+        const w = commonW * scale;
+        return { img, w, h: ratio ? w / ratio : 0 };
+    });
+    const plateW = commonW + pad * 2;
+    const totalH = items.reduce((sum, it) => sum + (it.h > 0 ? it.h + pad * 2 : 0), 0)
+        + gap * (items.length - 1);
+    const x = 800 - rightMargin - plateW;
+    let y = bottomY - totalH;
+    items.forEach(({ img, w, h }) => {
+        if (h <= 0) return;
+        const cardH = h + pad * 2;
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.fillRect(x, y, plateW, cardH);
+        ctx.strokeStyle = "rgba(0,0,0,0.2)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, plateW, cardH);
+        ctx.drawImage(img, x + pad + (commonW - w) / 2, y + pad, w, h);
+        y += cardH + gap;
+    });
+}
+
+// 🎵 오디오 관리
+const bgm = {
+    main: new Audio("bgm_main.mp3"),
+    game: new Audio("bgm_game.mp3"),
+    ending: new Audio("bgm_ending.mp3")
+};
+Object.values(bgm).forEach(b => { b.loop = true; });
+bgm.main.volume = 0.5;
+bgm.ending.volume = 0.5;
+bgm.game.volume = 0.15;
+
+const sfx = {
+    coin: new Audio("sfx_coin.wav"),
+    gacha: new Audio("sfx_gacha.wav"),
+    nogold: new Audio("sfx_nogold.wav"),
+    trash: new Audio("sfx_trash.wav"),
+    pump: new Audio("sfx_pump.wav")
+};
+sfx.pump.loop = true;  // 펌프는 누르는 동안 계속 반복
+Object.values(sfx).forEach(s => { s.volume = 0.7; });
+
+let currentBgm = null;
+function playBgm(key) {
+    if (currentBgm) { currentBgm.pause(); currentBgm.currentTime = 0; }
+    currentBgm = bgm[key];
+    currentBgm.play().catch(() => {});
+}
+function playSfx(key) {
+    sfx[key].currentTime = 0;
+    sfx[key].play().catch(() => {});
+}
 
 // 🎵 오디오 관리
 const bgm = {
@@ -359,18 +447,86 @@ let monsters = [];
 let monsterSpawnTimer = 0;
 let activeCardShown = false;
 let activeCardKey = null;
+let cardHideTimer = null;
 let notificationText = "";
 let notificationTimer = null;
 
 // 뽑기 등급표: chance는 100 기준 당첨 확률(%) - 점수(score_val)가 높은 물고기일수록
 // 낮게 잡아서 좋은 물고기일수록 잘 안 나오게 한다. 4개 합은 100이어야 함.
 const specialFishTemplates = {
-    witch: { name: "WITCH FISH", kor_name: "마녀 피쉬", rarity: "일반", chance: 55, score_val: 15, desc: "쓰레기 패널티 30% 완화 🎩" },
-    ghost: { name: "GHOST LOBSTER", kor_name: "유령 가재", rarity: "희귀", chance: 28, score_val: 25, desc: "10초마다 +15G 생산 👻" },
-    santa: { name: "SANTA GOLDFISH", kor_name: "산타 금붕어", rarity: "영웅", chance: 13, score_val: 35, desc: "적정 수질 시 점수 1.4배 🎅" },
-    pumpkin: { name: "PUMPKIN FISH", kor_name: "호박 왕관피쉬", rarity: "전설", chance: 4, score_val: 50, desc: "초당 기본 점수 든든하게 +50점 👑" }
+    witch: { name: "WITCH FISH", kor_name: "마녀 피쉬", rarity: "레어", chance: 55, score_val: 15, desc: "쓰레기 패널티 30% 완화 🎩" },
+    ghost: { name: "GHOST LOBSTER", kor_name: "유령 가재", rarity: "에픽", chance: 28, score_val: 25, desc: "10초마다 +15G 생산 👻" },
+    santa: { name: "SANTA GOLDFISH", kor_name: "산타 금붕어", rarity: "유니크", chance: 13, score_val: 35, desc: "적정 수질 시 점수 1.4배 🎅" },
+    pumpkin: { name: "PUMPKIN FISH", kor_name: "호박 왕관피쉬", rarity: "레전더리", chance: 4, score_val: 50, desc: "초당 기본 점수 든든하게 +50점 👑" }
 };
 const GACHA_COST = 150;
+
+function formatElapsedTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+const RESULT_FISH_SPECIES = [
+    { key: "witch", icon: "🎩" },
+    { key: "ghost", icon: "👻" },
+    { key: "santa", icon: "🎅" },
+    { key: "pumpkin", icon: "👑" }
+].map(sp => ({ ...sp, label: specialFishTemplates[sp.key].kor_name }));
+
+// 이번 판 결과(최종점수/소요시간/수집 물고기 총합 + 종류별 수집 수)를 카드 하나에 꽉 채워 보여준다.
+// 여러 판 기록을 남기는 랭킹판이 아니라 방금 끝난 게임 하나의 결과만 보여준다.
+function drawResultPanel(panelX, panelY, panelW, panelH) {
+    const grad = ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
+    grad.addColorStop(0, "#1b2f5c");
+    grad.addColorStop(1, "#0a1730");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(panelX, panelY, panelW, panelH, 20);
+    ctx.fill();
+    ctx.strokeStyle = "#3aa7ff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const cx = panelX + panelW / 2;
+    ctx.textAlign = "center";
+
+    let y = panelY + 32;
+    ctx.fillStyle = "#ffd166";
+    ctx.font = "bold 18px '맑은 고딕'";
+    ctx.fillText(`🏆 최종 점수 : ${score.toLocaleString()}점`, cx, y);
+
+    y += 26;
+    ctx.fillStyle = "#8fd6ff";
+    ctx.font = "bold 14px '맑은 고딕'";
+    ctx.fillText(`⏱️ 소요 시간 : ${formatElapsedTime(initialTime - timeLeft)}`, cx, y);
+
+    const totalFish = Object.values(ownedSpecialFishes).reduce((a, b) => a + b, 0);
+    y += 24;
+    ctx.fillStyle = "#c9f7c0";
+    ctx.font = "bold 14px '맑은 고딕'";
+    ctx.fillText(`🐟 수집한 물고기 : ${totalFish}마리`, cx, y);
+
+    // 종류별 수집 수를 2x2 칸으로 나눠서 남은 공간을 꽉 채운다.
+    y += 20;
+    const gridW = panelW - 32, gridH = panelY + panelH - 14 - y;
+    const cellW = gridW / 2, cellH = gridH / 2;
+    RESULT_FISH_SPECIES.forEach(({ key, icon, label }, i) => {
+        const col = i % 2, row = Math.floor(i / 2);
+        const cellX = panelX + 16 + cellW * col;
+        const cellY = y + cellH * row;
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(cellX + 4, cellY + 3, cellW - 8, cellH - 6);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "11px '맑은 고딕'";
+        ctx.fillText(`${icon} ${label}`, cellX + cellW / 2, cellY + cellH / 2 - 2);
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 12px '맑은 고딕'";
+        ctx.fillText(`${ownedSpecialFishes[key]}마리`, cellX + cellW / 2, cellY + cellH / 2 + 14);
+    });
+
+    ctx.textAlign = "left";
+}
 
 // 마우스 클릭 이벤트 처리
 canvas.addEventListener("click", (e) => {
@@ -381,7 +537,8 @@ canvas.addEventListener("click", (e) => {
     const y = (e.clientY - rect.top) * (canvas.height / rect.height);
 
     if (gameState === "main") {
-        if (x >= 300 && x <= 500 && y >= 190 && y <= 260) {
+        // "[START] 버튼을 눌러 게임을 시작하세요!" 문구(400,560 중심) 자체를 클릭 영역으로 사용
+        if (x >= 220 && x <= 580 && y >= 545 && y <= 575) {
             startGame();
         }
     } else if (gameState === "game") {
@@ -398,7 +555,8 @@ canvas.addEventListener("click", (e) => {
             rollGachaFish();
         }
     } else if (gameState === "ending") {
-        if (x >= 260 && x <= 540 && y >= 480 && y <= 540) {
+        // "[BACK] 메인화면" 텍스트(우측 하단, 790,585에 오른쪽 정렬로 찍힘) 자체를 클릭 영역으로 사용
+        if (x >= 670 && x <= 800 && y >= 568 && y <= 592) {
             gameState = "main";
             playBgm("main");
         }
@@ -424,6 +582,7 @@ function startGame() {
     ownedSpecialFishes = { witch: 0, ghost: 0, santa: 0, pumpkin: 0 };
     targetX = mapWidth / 2;
     targetY = mapHeight / 2;
+    isGpsReceived = false;
     fishes = [];
     monsters = [];
     for (let i = 0; i < fishCount; i++) spawnRandomNormalFish();
@@ -453,13 +612,21 @@ function spawnSpecialFish(fishKey) {
 }
 
 function spawnMonster() {
-    let garbageImgs = [assets.garbage1, assets.garbage2, assets.garbageSmall1, assets.garbageSmall2, assets.garbageSmall3];
-    let chosenImg = garbageImgs[Math.floor(Math.random() * garbageImgs.length)];
+    let isLarge = Math.random() < 0.25; // 큰 쓰레기 25% 확률로 등장
+    let chosenImg;
+    if (isLarge) {
+        let largeImgs = [assets.garbage1, assets.garbage2];
+        chosenImg = largeImgs[Math.floor(Math.random() * largeImgs.length)];
+    } else {
+        let smallImgs = [assets.garbageSmall1, assets.garbageSmall2, assets.garbageSmall3];
+        chosenImg = smallImgs[Math.floor(Math.random() * smallImgs.length)];
+    }
     monsters.push({
         x: Math.random() * (mapWidth - 200) + 100,
         y: Math.random() * (mapHeight - 200) + 100,
         photo: chosenImg,
-        hp: 3
+        hp: 3,
+        isLarge: isLarge
     });
 }
 
@@ -474,7 +641,8 @@ function showInGameMessage(text) {
 function showFishCardPopup(fishKey) {
     activeCardShown = true;
     activeCardKey = fishKey;
-    setTimeout(() => {
+    if (cardHideTimer) clearTimeout(cardHideTimer);
+    cardHideTimer = setTimeout(() => {
         hideFishCardPopup();
     }, 1500);
 }
@@ -486,8 +654,6 @@ function hideFishCardPopup() {
 // 조이스틱 버튼 하나로 실행되는 랜덤 뽑기. 4개 물고기 중 하나를 chance(%) 가중치로
 // 추첨한다 - 값이 좋은 물고기(pumpkin 등)일수록 chance가 낮게 설정되어 있어 잘 안 나온다.
 function rollGachaFish() {
-    if (activeCardShown) return; // 카드 팝업이 떠 있는 동안은 중복 뽑기 방지
-
     if (gold < GACHA_COST) {
         playSfx("nogold");
         showInGameMessage(`❌ 골드가 부족합니다! (필요: ${GACHA_COST}G)`);
@@ -676,7 +842,7 @@ function pollGamepadForGacha() {
     prevGachaButtonPressed = pressed;
 }
 
-// --- [조이스틱 게임 시작 버튼] 메인 화면에서 마우스로 "게임 화면 시작"을 누르는 대신
+// --- [조이스틱 게임 시작 버튼] 메인 화면에서 마우스로 START 안내 문구를 누르는 대신
 // 조이스틱의 Start 버튼으로 시작할 수 있게 한다. 버튼 인덱스 9번 = 실제 조이스틱으로
 // 실측 확인 완료 (Start 버튼). ---
 const START_GAMEPAD_BUTTON_INDEX = 9; // 실측 확인 완료
@@ -753,16 +919,18 @@ function mainLoop() {
         ctx.fillStyle = "#ffffff";
         ctx.fillText("🎯 쓰레기는 시원하게 치우고, 물고기 친구들을 데려오자!", 400, 150);
 
-        ctx.fillStyle = "#3a2214";
-        ctx.strokeStyle = "#e29578";
-        ctx.lineWidth = 3;
-        ctx.fillRect(300, 190, 200, 70);
-        ctx.strokeRect(300, 190, 200, 70);
+        // START 안내 텍스트 - 예전엔 이 위에 클릭용 "게임 화면 시작" 박스가 따로 있었는데
+        // 없애고, 이 문구 자체를 버튼처럼 쓴다. 배경 그림 속 캐릭터 말풍선이 화면 중앙(y~230
+        // 부근)에 있어서 그 자리에 겹치지 않도록 화면 아래쪽 빈 공간으로 옮겼다.
+        ctx.fillStyle = "#150d08";
+        ctx.font = "bold 18px '맑은 고딕'";
+        ctx.fillText("[START] 버튼을 눌러 게임을 시작하세요!", 401, 561);
+        ctx.fillStyle = "#fff3d1";
+        ctx.fillText("[START] 버튼을 눌러 게임을 시작하세요!", 400, 560);
 
-        ctx.fillStyle = "white";
-        ctx.font = "bold 16px '맑은 고딕'";
-        ctx.fillText("게임 화면 시작", 400, 230);
         ctx.textAlign = "left";
+
+        drawCornerLogos(598);
 
     } else if (gameState === "game") {
         animTimer += 0.2;
@@ -800,12 +968,14 @@ function mainLoop() {
                 boatSpriteIndex = 14; // 좌상
             }
 
-            // 조이스틱 입력 방향으로 화면상 위치를 직접 이동 (게임 속 가상의 맵이라 실제
-            // GPS 좌표는 이 위치에 반영하지 않는다 - 위 refreshState()의 gps_fix 처리 참고)
-            let speed = 3.5; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0에서 낮춤)
-            let len = Math.hypot(dx, dy);
-            targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
-            targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
+            // GPS 미수신 시 dead-reckoning 폴백: 조이스틱 입력 방향으로 화면상 위치를 직접 이동
+            // (GPS가 들어오는 순간 refreshState()가 targetX/Y를 덮어써서 자연히 GPS 기준으로 전환됨)
+            if (!isGpsReceived) {
+                let speed = 3.5; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0에서 낮춤)
+                let len = Math.hypot(dx, dy);
+                targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
+                targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
+            }
         }
 
         // 사이드바(HUD)는 캔버스 우측 230px 고정, 나머지가 호수(플레이 뷰포트) 폭.
@@ -855,14 +1025,16 @@ function mainLoop() {
         let beamWorldY = targetY + Math.sin(boatAngle) * 85;
 
         monsters.forEach(m => {
+            let size = m.isLarge ? 44 : 28;
+            let half = size / 2;
             let mx = m.x - cameraX;
             let my = m.y - cameraY;
             if (mx >= -30 && mx <= lakeWidth + 30 && my >= -30 && my <= 630) {
                 if (m.photo.complete && m.photo.naturalWidth !== 0) {
-                    ctx.drawImage(m.photo, mx - 14, my - 14, 28, 28);
+                    ctx.drawImage(m.photo, mx - half, my - half, size, size);
                 } else {
                     ctx.fillStyle = "#888";
-                    ctx.fillRect(mx - 14, my - 14, 28, 28);
+                    ctx.fillRect(mx - half, my - half, size, size);
                 }
             }
 
@@ -873,7 +1045,9 @@ function mainLoop() {
                     if (m.hp <= 0) {
                         let idx = monsters.indexOf(m);
                         if (idx > -1) monsters.splice(idx, 1);
-                        let reward = Math.floor(Math.random() * 16) + 15;
+                        let reward = m.isLarge
+                            ? Math.floor(Math.random() * 31) + 60  // 큰 쓰레기는 보상도 더 크게 (60~90G)
+                            : Math.floor(Math.random() * 16) + 15;
                         gold += reward;
                         playSfx("trash");
                         playSfx("coin");
@@ -1105,13 +1279,17 @@ function mainLoop() {
             ctx.fillRect(15, 15, 130, 137);
         }
 
-        // 쓰레기 몬스터는 가상의 게임 맵 좌표만 갖고 있어서(실제 GPS 좌표가 없음) 실제
-        // 위성사진 위에는 찍지 않는다 - 찍으면 서로 다른 좌표계라 위치가 안 맞는다.
+        monsters.forEach(m => {
+            let mxMini = 15 + (m.x / mapWidth) * 130;
+            let myMini = 15 + (m.y / mapHeight) * 137;
+            ctx.fillStyle = "#ff4757";
+            ctx.beginPath();
+            ctx.arc(mxMini, myMini, 2, 0, Math.PI * 2);
+            ctx.fill();
+        });
 
-        // 보트 점: 위성사진 자체가 항상 "보트의 마지막 GPS 위치"를 중심으로 다시
-        // 요청되므로(updateMiniMapUrl), 보트는 항상 미니맵 정중앙에 찍으면 된다.
-        let bxMini = 15 + 130 / 2;
-        let byMini = 15 + 137 / 2;
+        let bxMini = 15 + (targetX / mapWidth) * 130;
+        let byMini = 15 + (targetY / mapHeight) * 137;
         ctx.fillStyle = "#38bdf8";
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1;
@@ -1122,10 +1300,7 @@ function mainLoop() {
 
         ctx.fillStyle = "#55ff55";
         ctx.font = "bold 9px 'Courier New'";
-        const latText = lastGpsLat !== null ? lastGpsLat.toFixed(5) : "-";
-        const lngText = lastGpsLng !== null ? lastGpsLng.toFixed(5) : "-";
-        ctx.fillText(`위도: ${latText}`, 80, 158);
-        ctx.fillText(`경도: ${lngText}`, 80, 168);
+        ctx.fillText(`X: ${Math.floor(targetX)}, Y: ${Math.floor(targetY)}`, 80, 162);
 
         // 8. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
         const lakeCenterX = lakeWidth / 2;
@@ -1141,6 +1316,62 @@ function mainLoop() {
             ctx.fillText(notificationText, lakeCenterX, 545);
         }
 
+        // 8-1. 퀘스트 안내 텍스트 (좌측 하단)
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(10, 390, 145, 148);
+        ctx.strokeStyle = "#ffd166";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(10, 390, 145, 148);
+
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 11px '맑은 고딕'";
+        ctx.textAlign = "left";
+        ctx.fillText("[퀘스트 1] 푸른 호수 클리어!", 15, 408);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "10px '맑은 고딕'";
+        ctx.fillText("목표: [B]펌프 모드 변경 후", 15, 425);
+        ctx.fillText("[A]눌러 펌프 작동→쓰레기 제거!", 15, 440);
+        ctx.fillStyle = "#2ed573";
+        ctx.fillText("보상: 친환경 점수 + 코인 획득", 15, 455);
+
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 11px '맑은 고딕'";
+        ctx.fillText("[퀘스트 2] 동료를 찾아라!", 15, 475);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "10px '맑은 고딕'";
+        ctx.fillText("목표: [X]눌러 코인으로", 15, 492);
+        ctx.fillText("랜덤 물고기 뽑기!", 15, 507);
+        ctx.fillStyle = "#2ed573";
+        ctx.fillText("보상: 물고기마다 보너스 점수", 15, 522);
+
+        // 8-2. 물고기 능력 설명 (퀘스트 칸 바로 밑)
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(10, 540, 145, 58);
+        ctx.strokeStyle = "#4cc9f0";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(10, 540, 145, 58);
+
+        ctx.fillStyle = "#4cc9f0";
+        ctx.font = "bold 11px '맑은 고딕'";
+        ctx.fillText("[물고기 능력]", 15, 554);
+
+        // 세로 공간이 좁아서 4줄로 쭉 나열하는 대신 2x2 칸에 나눠 담아, 퀘스트 칸과
+        // 같은 크기(10px)의 글씨를 써도 박스 안에 다 들어가게 한다.
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "10px '맑은 고딕'";
+        const abilityCellW = 145 / 2;
+        [
+            { x: 10, y: 570, text: "🎩 피해 -30%" },
+            { x: 10 + abilityCellW, y: 570, text: "👻 +15G/10초" },
+            { x: 10, y: 586, text: "🎅 점수 x1.4" },
+            { x: 10 + abilityCellW, y: 586, text: "👑 +50점/초" }
+        ].forEach(({ x: cx, y: cy, text }) => {
+            ctx.fillText(text, cx + abilityCellW / 2, cy);
+        });
+
+        ctx.textAlign = "center";
+
         // 9. 특별 물고기 영입 카드 팝업
         if (activeCardShown && activeCardKey) {
             ctx.fillStyle = "rgba(0,0,0,0.5)";
@@ -1150,16 +1381,16 @@ function mainLoop() {
             ctx.fillStyle = "#110a05";
             ctx.strokeStyle = "#e29578";
             ctx.lineWidth = 3;
-            ctx.fillRect(cardX, 105, 220, 390);
-            ctx.strokeRect(cardX, 105, 220, 390);
+            ctx.fillRect(cardX, 105, 220, 330);
+            ctx.strokeRect(cardX, 105, 220, 330);
 
             ctx.fillStyle = "#ffd166";
             ctx.font = "bold 10px 'Courier New'";
-            ctx.fillText("★  XVII  ★", lakeCenterX, 125);
+            ctx.fillText(`★  ${specialFishTemplates[activeCardKey].rarity}  ★`, lakeCenterX, 125);
 
             ctx.fillStyle = "#ffffff";
             ctx.font = "bold 12px 'Courier New'";
-            ctx.fillText(specialFishTemplates[activeCardKey].name, lakeCenterX, 150);
+            ctx.fillText(specialFishTemplates[activeCardKey].kor_name, lakeCenterX, 150);
 
             if (assets.fourFish.complete && assets.fourFish.naturalWidth !== 0) {
                 let fw = assets.fourFish.naturalWidth;
@@ -1185,10 +1416,6 @@ function mainLoop() {
             ctx.moveTo(cardX + 30, 415);
             ctx.lineTo(cardX + 190, 415);
             ctx.stroke();
-
-            ctx.fillStyle = "#f43f5e";
-            ctx.font = "italic 9px '맑은 고딕'";
-            ctx.fillText("- 1.5초 후 자동 닫힘 -", lakeCenterX, 445);
         }
 
         ctx.textAlign = "left";
@@ -1201,35 +1428,19 @@ function mainLoop() {
             ctx.fillRect(0, 0, 800, 600);
         }
 
-        let elapsed = initialTime - timeLeft;
-        let mMin = Math.floor(elapsed / 60);
-        let mSec = elapsed % 60;
-        let timeStr = mMin > 0 ? `${mMin}분 ${mSec}초` : `${mSec}초`;
+        // 이번 판 결과(점수/시간/수집한 물고기 종류별 개수)를 카드 하나로 꽉 채워 보여준다.
+        drawResultPanel(230, 275, 340, 210);
 
-        ctx.fillStyle = "#1c100a";
-        ctx.strokeStyle = "#ffd166";
-        ctx.lineWidth = 3;
-        ctx.fillRect(230, 320, 340, 120);
-        ctx.strokeRect(230, 320, 340, 120);
-
-        ctx.textAlign = "center";
-        ctx.fillStyle = "#ffd166";
-        ctx.font = "bold 18px '맑은 고딕'";
-        ctx.fillText(`🏆 최종 점수 : ${score.toLocaleString()}점`, 400, 365);
-
-        ctx.fillStyle = "#4cc9f0";
-        ctx.fillText(`⏱️ 소요 시간 : ${timeStr}`, 400, 405);
-
-        ctx.fillStyle = "#1e293b";
-        ctx.strokeStyle = "#38bdf8";
-        ctx.lineWidth = 3;
-        ctx.fillRect(260, 480, 280, 60);
-        ctx.strokeRect(260, 480, 280, 60);
-
+        // BACK 안내 텍스트 (우측 하단) - 마우스로도 클릭 가능(클릭 핸들러 참고)
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 15px '맑은 고딕'";
-        ctx.fillText("🏠 메인 화면으로 돌아가기", 400, 517);
+        ctx.font = "11px '맑은 고딕'";
+        ctx.textAlign = "right";
+        ctx.fillText("[BACK] 메인화면", 790, 585);
+
         ctx.textAlign = "left";
+
+        drawCornerLogos(565, 15); // 세로로 쌓으면 꽤 높아져서, "[BACK]" 텍스트(y≈574~585)를 피해 배치. 오른쪽 끝에 딱 붙지 않게 여백을 둠
+
     }
 
     requestAnimationFrame(mainLoop);
