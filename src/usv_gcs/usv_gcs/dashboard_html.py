@@ -286,6 +286,21 @@ function toggleLed() {
     }).catch((e) => console.error('LED 명령 전송 실패', e));
 }
 
+// --- [게임 활성 상태] 실제 배 하드웨어(추진기/펌프/자동모드)는 이 웹페이지가 아니라
+// joy_to_cmd_node.py가 조이스틱을 직접 읽어서 제어한다. "START를 누르기 전엔 하드웨어가
+// 안 움직여야 한다"는 이 화면의 gameState를 그 별도 ROS 프로세스는 알 방법이 없으므로,
+// /api/game_active로 알려주면 gui_main_node.py가 /gcs/game_active 토픽으로 중계한다.
+// 조이스틱 입력 자체(축/버튼 읽기)는 joy_to_cmd_node가 이 값과 무관하게 항상 계속하고,
+// 이 값이 false인 동안만 실제 발행(cmd_vel/pump_cmd/auto_mode)을 멈춘다. ---
+function setGameActive(active) {
+    ledOn = false; // 서버(gui_main_node.py)도 이 호출에서 LED를 강제로 끄니 화면도 미리 맞춰둔다
+    fetch('/api/game_active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active }),
+    }).catch((e) => console.error('game_active 전송 실패', e));
+}
+
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
@@ -571,8 +586,16 @@ document.addEventListener("click", () => {
     }
 }, { once: true });
 
+// 엔딩으로 넘어가는 지점이 치트/점수달성/시간초과 3곳이라, gameState 대입만 반복하면
+// game_active를 끄는 걸 빠뜨리기 쉬워서 하나로 모았다.
+function endGame() {
+    gameState = "ending";
+    setGameActive(false);
+}
+
 function startGame() {
     gameState = "game";
+    setGameActive(true);
     playBgm("game");
     timeLeft = initialTime;
     score = 0;
@@ -688,7 +711,7 @@ function triggerEndingCheat() {
     } else {
         showInGameMessage("🚀 엔딩 치트 활성화 완료!");
         score = targetScore;
-        gameState = "ending";
+        endGame();
     }
 }
 
@@ -723,7 +746,7 @@ setInterval(() => {
     score += currentTickScore;
 
     if (score >= targetScore) {
-        gameState = "ending";
+        endGame();
         playBgm("ending");
         sfx.pump.pause(); sfx.pump.currentTime = 0;
         return;
@@ -731,7 +754,7 @@ setInterval(() => {
 
     if (timeLeft <= 0) {
         isGameOver = true;
-        gameState = "ending";
+        endGame();
         playBgm("ending");
         sfx.pump.pause(); sfx.pump.currentTime = 0;
         return;

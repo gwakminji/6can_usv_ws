@@ -38,6 +38,14 @@ PBL(Problem-Based Learning) 기반 사회공헌 프로젝트입니다. 무인수
 
 ---
 
+## ⚠️ 작동 특이사항
+
+- 🚤 **배 이동** — 게임 상태와 무관하게 조이스틱으로 항상 조종 가능
+- 🔒 **펌프 · 자동/수동 전환 · LED** — 대시보드에서 START를 눌러 게임이 진행 중일 때만 동작 (메인·엔딩 화면에서는 무시됨)
+- 🔄 **초기화** — 게임이 시작되거나 끝날 때마다 자동모드는 수동으로, LED는 꺼진 상태로 리셋
+
+---
+
 ## 🛠 시스템 아키텍처 및 파트별 역할
 
 6can은 무인선에 탑재되는 **HW(하드웨어 제어) 보드 2대**와, 육상에서 관제하는
@@ -93,6 +101,9 @@ flowchart LR
   J2C -->|/actuator/pump_cmd| ACT
   J2C -->|/actuator/auto_mode| GUI
   J2C -->|/actuator/auto_mode| ACT
+  GUI -->|/gcs/game_active| J2C
+  GUI -->|/actuator/led_cmd| ACT
+  ACT -->|/actuator/led_state| GUI
 
   WQN -->|/water_quality/data| GUI
   WQN -->|/water_quality/data| ACT
@@ -132,6 +143,8 @@ flowchart LR
 | `camera_host` | `src/usv_gcs/config/gcs_params.yaml` 또는 `gcs.launch.py` 인자 | *(필수, 기본 없음)* | B1 보드의 실제 IP로 설정. 안 하면 카메라 스트림 연결 실패 |
 | `linear_axis` / `angular_axis` / `angular_scale` | `gcs.launch.py` 인자 | `1` / `0` / `-1.0` | 실제 조이스틱 축 번호·방향이 다를 때 |
 | `pump_button` / `auto_button` | `gcs.launch.py` 인자 | `0`(A) / `1`(B) | 조이스틱 버튼 배치가 다를 때 |
+| `linear_ramp_rate` / `angular_ramp_rate` | `src/usv_gcs/usv_gcs/joy_to_cmd_node.py`의 `declare_parameter` 기본값 (launch 인자 아님 — 일부러 여기 한 곳만 유지) | `0.2` / `0.4` | 조이스틱을 급히 꺾어도 속도가 얼마나 천천히 올라갈지 조정할 때 |
+| `GACHA_GAMEPAD_BUTTON_INDEX` | `dashboard_html.py` 상수 | `2`(Y, 추정치) | 실기기로 검증 후 정확한 값으로 |
 | `max_pwm` | `actuators.launch.py` 인자 | `255` | 실제 모터 드라이버 PWM 사양 확정 후 |
 | `bad_below` / `good_above` / `*_manual_hold_s` | `actuators.launch.py` 인자 | `40.0` / `60.0` / `60.0`초 | 실측 수질 범위·자동/수동 우선 시간 조정 시 |
 | `SHOW_CAMERA` | `src/usv_gcs/usv_gcs/dashboard_html.py` 상단 상수 | `false` | 웹 대시보드에 카메라 화면을 다시 띄우려면 `true`로 |
@@ -173,15 +186,19 @@ B1/B2는 `install_*_autostart.sh`로 부팅 자동 실행을 등록해두면 이
 ## 🕹️ 조이스틱 구성
 
 하나의 컨트롤러가 **① 실제 보트 조종(ROS)** 과 **② 웹 대시보드 미니 모니터링 화면
-조작(브라우저)** 을 독립적으로 처리합니다.
+조작(브라우저)** 을 처리합니다. 이동(전진/후진/회전)은 웹 대시보드 상태와 무관하게
+항상 되지만, **펌프·자동/수동 전환·LED는 대시보드에서 START를 눌러 게임이 진행 중일
+때만** 실제로 동작합니다 (메인 화면·엔딩 화면에서는 버튼을 눌러도 무시됨). 게임이
+시작되거나 끝나는 순간마다 자동모드는 수동으로, LED는 꺼진 상태로 초기화됩니다.
 
 | 구분 | 조작 | 동작 |
 |---|---|---|
-| 보트 조종 (ROS `/joy`) | 왼쪽 스틱 좌/우 · 상/하 | 좌우 회전 · 전진/후진 (`/cmd_vel`) |
-| 보트 조종 (ROS `/joy`) | A 버튼 | 펌프 on/off 토글 |
-| 보트 조종 (ROS `/joy`) | B 버튼 | 자동/수동 제어 모드 토글 |
+| 보트 조종 (ROS `/joy`) | 왼쪽 스틱 좌/우 · 상/하 | 좌우 회전 · 전진/후진 (`/cmd_vel`) — 게임 상태 무관, 항상 동작 |
+| 보트 조종 (ROS `/joy`) | A 버튼 | 펌프 on/off 토글 (게임 진행 중일 때만) |
+| 보트 조종 (ROS `/joy`) | B 버튼 | 자동/수동 제어 모드 토글 (게임 진행 중일 때만) |
 | 웹 화면 (브라우저 Gamepad API) | Start 버튼 | 대시보드 화면 시작 |
-| 웹 화면 (브라우저 Gamepad API) | X 버튼 | 화면 내 상호작용(뽑기) 실행 |
+| 웹 화면 (브라우저 Gamepad API) | X 버튼 | LED on/off 토글 (게임 진행 중일 때만) |
+| 웹 화면 (브라우저 Gamepad API) | Y 버튼 | 화면 내 상호작용(뽑기) 실행 |
 | 웹 화면 (브라우저 Gamepad API) | Back 버튼 | 초기 화면으로 복귀 |
 
 버튼 인덱스를 실기기로 확인하려면 브라우저 콘솔(F12)에서:

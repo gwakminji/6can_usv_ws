@@ -104,6 +104,13 @@ class GuiMainNode(Node):
         self.create_subscription(ColorRGBA, '/actuator/led_state', self.on_led_state, 10)
         # 대시보드의 LED on/off 토글이 여기로 명령을 보낸다 (actuator_driver_node.py가 구독).
         self.led_cmd_pub = self.create_publisher(ColorRGBA, '/actuator/led_cmd', 10)
+        # 웹 화면의 gameState("START 눌렀는지")를 joy_to_cmd_node.py(별도 프로세스라 이 화면의
+        # JS 상태를 직접 볼 방법이 없다)에 중계한다 - 그쪽이 이 값으로 START 전엔 추진기/펌프/
+        # 자동모드 발행을 막는다. 기본값 False(비활성)와 대칭이 맞도록, 이 노드 자신도 시작 시
+        # 한 번 false로 발행해둔다 - auto_mode 초기 발행과 같은 이유(volatile QoS라 늦게 붙은
+        # 쪽이 놓칠 수 있음).
+        self.game_active_pub = self.create_publisher(Bool, '/gcs/game_active', 10)
+        self.publish_game_active(False)
 
         self.get_logger().info('GUI main node started')
 
@@ -112,6 +119,11 @@ class GuiMainNode(Node):
         msg.r = msg.g = msg.b = 1.0 if on else 0.0
         msg.a = 1.0
         self.led_cmd_pub.publish(msg)
+
+    def publish_game_active(self, active: bool):
+        msg = Bool()
+        msg.data = active
+        self.game_active_pub.publish(msg)
 
     def on_water_quality(self, msg: String):
         try:
@@ -285,6 +297,19 @@ def create_app(node: GuiMainNode) -> Flask:
         on = bool(body.get('on'))
         node.publish_led_cmd(on)
         return jsonify({'ok': True, 'on': on})
+
+    # 대시보드가 START를 누르거나(true) 게임이 끝날 때(false) 호출한다. joy_to_cmd_node.py가
+    # 이걸 구독해서 펌프/자동모드는 게임이 진행 중일 때만 실제로 발행한다 (배 이동은 게임
+    # 상태와 무관하게 항상 됨). 시작/종료 양쪽 다 LED는 꺼진 초기 상태로 되돌린다 - LED는
+    # 이 노드가 직접 발행하는 토픽이라 여기서 처리한다 (자동모드 초기화는 joy_to_cmd_node.py
+    # on_game_active()가 같은 시점에 맡는다).
+    @app.post('/api/game_active')
+    def api_game_active():
+        body = request.get_json(silent=True) or {}
+        active = bool(body.get('active'))
+        node.publish_game_active(active)
+        node.publish_led_cmd(False)
+        return jsonify({'ok': True, 'active': active})
 
     return app
 

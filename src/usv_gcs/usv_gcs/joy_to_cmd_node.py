@@ -60,6 +60,12 @@ class JoyToCmdNode(Node):
         # gui_main_node/B2 둘 다 이 토픽을 구독. gui_main_node는 표시만, B2는 이 값으로
         # 자동/수동을 나눈다 (발행 X, 여기서만 발행).
         self.auto_mode_pub = self.create_publisher(Bool, '/actuator/auto_mode', qos)
+        # gui_main_node.py가 대시보드의 gameState(START 눌렀는지)를 중계해준다. 이 프로세스는
+        # 웹페이지의 JS 상태를 직접 볼 방법이 없어서 별도 토픽으로 받아야 한다. 기본값
+        # False - 배 이동(cmd_vel)은 게임 상태와 무관하게 항상 되지만, 펌프/자동모드는 게임이
+        # 실제로 진행 중일 때만(gameState === "game") 허용한다 - main/ending 화면에서는 막는다.
+        self.create_subscription(Bool, '/gcs/game_active', self.on_game_active, qos)
+        self.game_active = False
 
         self._last_joy_time = None
         self.current_linear = 0.0
@@ -113,9 +119,10 @@ class JoyToCmdNode(Node):
         if abs(angular) < self.deadzone:
             angular = 0.0
 
+        # 배 이동은 게임 상태와 무관하게 항상 된다 - joy_node/joy_to_cmd_node는 대시보드
+        # 게임과 별개로 실제 배를 조종하는 경로라서 여기엔 게이팅이 없다.
         target_linear = linear * self.linear_scale
         target_angular = angular * self.angular_scale
-
         self.current_linear = self._ramp(self.current_linear, target_linear, self.linear_ramp_rate, dt)
         self.current_angular = self._ramp(self.current_angular, target_angular, self.angular_ramp_rate, dt)
 
@@ -124,27 +131,46 @@ class JoyToCmdNode(Node):
 
         self.cmd_pub.publish(twist)
 
-        # 자동 모드일 때는 A 버튼을 눌러도 /actuator/pump_cmd 자체를 발행하지 않는다 -
-        # 펌프 on/off는 수동 모드에서만 바뀌어야 하고, GCS 화면(pump_on)도 이 토픽으로
-        # 갱신되므로 여기서 막아야 화면까지 같이 안 바뀐다 (actuator_driver_node도
-        # 자동 모드 중엔 이 명령을 무시하지만, 애초에 GCS에서부터 안 보내는 게 맞다).
-        if not self.auto_mode and len(msg.buttons) > self.pump_button:
+        # 펌프/자동모드는 눌림 자체(edge)는 game_active와 무관하게 항상 추적하되, 실제
+        # 발행/토글은 게임이 진행 중일 때(gameState === "game")만 한다 - main/ending
+        # 화면에서 버튼을 눌러도 아무 일도 안 일어난다. edge를 항상 추적해야, 게임이 아닐 때
+        # 버튼을 누르고 있다가 게임이 시작되는 순간 눌림 상태가 이미 true라서 edge를
+        # 놓치는 일이 없다.
+        if len(msg.buttons) > self.pump_button:
             new_state = bool(msg.buttons[self.pump_button])
-            if new_state != self.prev_pump_state:
+            # 자동 모드일 때는 A 버튼을 눌러도 /actuator/pump_cmd 자체를 발행하지 않는다 -
+            # 펌프 on/off는 수동 모드에서만 바뀌어야 하고, GCS 화면(pump_on)도 이 토픽으로
+            # 갱신되므로 여기서 막아야 화면까지 같이 안 바뀐다 (actuator_driver_node도
+            # 자동 모드 중엔 이 명령을 무시하지만, 애초에 GCS에서부터 안 보내는 게 맞다).
+            if self.game_active and not self.auto_mode and new_state != self.prev_pump_state:
                 pump_msg = Bool()
                 pump_msg.data = new_state
                 self.pump_pub.publish(pump_msg)
-                self.prev_pump_state = new_state
+            self.prev_pump_state = new_state
 
         if len(msg.buttons) > self.auto_button:
             button_pressed = bool(msg.buttons[self.auto_button])
-            if button_pressed and not self.prev_auto_button_state:
+            if self.game_active and button_pressed and not self.prev_auto_button_state:
                 # 버튼을 누르는 순간(edge)에만 토글 - 누르고 있는 동안 계속 뒤집히지 않게
                 self.auto_mode = not self.auto_mode
                 auto_msg = Bool()
                 auto_msg.data = self.auto_mode
                 self.auto_mode_pub.publish(auto_msg)
             self.prev_auto_button_state = button_pressed
+
+    def on_game_active(self, msg: Bool):
+        self.game_active = bool(msg.data)
+
+        # 게임이 (다시) 시작될 때도, 방금 끝났을 때도 항상 같은 초기 상태(자동모드는 수동)로
+        # 되돌린다 - gui_main_node.py가 /api/game_active를 호출하는 두 지점(시작/종료)마다
+        # 이 콜백이 오므로 여기 한 곳에서 양쪽 다 처리된다. LED를 초기 off로 되돌리는 건
+        # gui_main_node.py 쪽(같은 /api/game_active 핸들러)이 맡는다 - LED는 이 노드가 아니라
+        # 그쪽이 발행하는 토픽이라서.
+        if self.auto_mode:
+            self.auto_mode = False
+            auto_msg = Bool()
+            auto_msg.data = False
+            self.auto_mode_pub.publish(auto_msg)
 
     def heartbeat_callback(self):
         header = Header()
