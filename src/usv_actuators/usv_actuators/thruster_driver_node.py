@@ -1,217 +1,424 @@
 #!/usr/bin/env python3
-"""
-thruster_driver_node
+"""thruster_driver_node — usv_actuators 패키지 (B2 보드).
 
-ROS2 /cmd_vel (geometry_msgs/Twist) 구독
-→ 좌/우 스러스터 PWM 계산
-→ UDP로 UNO Q 로컬 gateway Python에 전송
-
-구조:
-ROS2 Docker
-    /cmd_vel
-       ↓
-thruster_driver_node
-       ↓ UDP
-192.168.0.72:5005
-       ↓
-UNO Q gateway Python
-       ↓
-RouterBridge
-       ↓
-MCU
-       ↓
-ESC / Motor
+구독: /cmd_vel [geometry_msgs/msg/Twist]
+Direct Bridge RPC 호출 방식으로 MCU 스케치('set_thruster_pwm') 직접 제어.
 """
 
-import socket
-import struct
 import time
 
-from geometry_msgs.msg import Twist
 import rclpy
 from rclpy.node import Node
+from geometry_msgs.msg import Twist
+
+from .bridge import Bridge
+from .telemetry import bounded_integer
+
 
 # ============================================================
-# Network
+# Thruster 설정
 # ============================================================
 
-GATEWAY_ADDR = ("192.168.0.72", 5005)
+NEUTRAL_PWM = 1487
 
-# ============================================================
-# Thruster PWM settings
-# ============================================================
+# ESC deadband
+DEADBAND = 35
 
-NEUTRAL_PWM = 1500
+# 최대 출력 변화량
+MAX_DELTA = 50
 
-# 최대 전진: 1700us / 최대 후진: 1300us
-MAX_DELTA = 200
+# PWM ramp
+STEP_US = 150
 
-# 조이스틱 미세 입력 무시
-INPUT_DEADBAND = 0.05
+# 정/역방향 전환 시 중립 유지 시간
+REVERSE_PAUSE = 0.3
 
-# /cmd_vel 끊기면 중립으로 복귀
+# /cmd_vel timeout
 CMD_TIMEOUT = 0.5
 
-# UDP 전송 주기
-RATE_HZ = 20.0
-DT = 1.0 / RATE_HZ
 
+# ============================================================
+# 추진기 방향 설정
+#
+# 중요:
+# LEFT  = CCW 추진기
+# RIGHT = CW 추진기
+#
+# 현재 문제 해결을 위해:
+#   왼쪽은 정상 방향
+#   오른쪽만 PWM 방향 반전
+# ============================================================
 
-def clamp(value, minimum, maximum):
-    return max(minimum, min(maximum, value))
+LEFT_REVERSED = False
+RIGHT_REVERSED = True
 
 
 class ThrusterDriverNode(Node):
 
     def __init__(self):
-        super().__init__("thruster_driver_node")
+        super().__init__('thruster_driver_node')
 
+        # ----------------------------------------------------
         # /cmd_vel subscriber
-        self.create_subscription(
+        # ----------------------------------------------------
+        self.cmd_sub = self.create_subscription(
             Twist,
-            "/cmd_vel",
+            '/cmd_vel',
             self.on_cmd_vel,
             10
         )
 
-        # UDP socket
-        self.sock = socket.socket(
-            socket.AF_INET,
-            socket.SOCK_DGRAM
-        )
+        # 현재 PWM
+        self.cur_left = NEUTRAL_PWM
+        self.cur_right = NEUTRAL_PWM
 
-        # 현재 목표 PWM
+        # 목표 PWM
         self.target_left = NEUTRAL_PWM
         self.target_right = NEUTRAL_PWM
 
-        # 마지막 /cmd_vel 수신 시각
-        self.last_cmd_time = 0.0
+        # 정/역방향 변경 시 중립 유지
+        self.hold_until = 0.0
 
-        # timeout 로그 중복 방지
-        self.timed_out = True
+        # 마지막 명령 수신 시간
+        self.last_cmd_time = time.monotonic()
 
-        # 20Hz control loop
-        self.create_timer(
-            DT,
+        # 20 Hz control loop
+        self.timer = self.create_timer(
+            0.05,
             self.control_loop
         )
 
         self.get_logger().info(
-            f"Thruster Driver Node Started "
-            f"(UDP Mode -> {GATEWAY_ADDR[0]}:{GATEWAY_ADDR[1]})"
+            'Thruster Driver Node Started '
+            '(Direct Bridge RPC Mode)'
         )
-
-    def on_cmd_vel(self, msg: Twist):
-        # 입력 제한
-        linear = clamp(msg.linear.x, -1.0, 1.0)
-        angular = clamp(msg.angular.z, -1.0, 1.0)
-
-        # Deadband
-        if abs(linear) < INPUT_DEADBAND:
-            linear = 0.0
-
-        if abs(angular) < INPUT_DEADBAND:
-            angular = 0.0
-
-        # Differential thrust mixing
-        left = linear - angular
-        right = linear + angular
-
-        # 비율 유지하면서 -1 ~ +1 범위로 정규화
-        scale = max(1.0, abs(left), abs(right))
-        left /= scale
-        right /= scale
-
-        # -1 ~ +1 -> 1500 ± MAX_DELTA
-        left_pwm = int(round(NEUTRAL_PWM + left * MAX_DELTA))
-        right_pwm = int(round(NEUTRAL_PWM + right * MAX_DELTA))
-
-        # 안전 범위 제한
-        left_pwm = clamp(
-            left_pwm,
-            NEUTRAL_PWM - MAX_DELTA,
-            NEUTRAL_PWM + MAX_DELTA
-        )
-        right_pwm = clamp(
-            right_pwm,
-            NEUTRAL_PWM - MAX_DELTA,
-            NEUTRAL_PWM + MAX_DELTA
-        )
-
-        self.target_left = left_pwm
-        self.target_right = right_pwm
-
-        self.last_cmd_time = time.monotonic()
-        self.timed_out = False
 
         self.get_logger().info(
-            f"CMD linear={linear:.2f} angular={angular:.2f} "
-            f"-> L={left_pwm}us R={right_pwm}us"
+            f'Thruster direction: '
+            f'LEFT_REVERSED={LEFT_REVERSED}, '
+            f'RIGHT_REVERSED={RIGHT_REVERSED}'
         )
 
-    def control_loop(self):
-        now = time.monotonic()
+    # ========================================================
+    # /cmd_vel callback
+    # ========================================================
 
-        # /cmd_vel timeout
-        if (
-            self.last_cmd_time == 0.0
-            or now - self.last_cmd_time > CMD_TIMEOUT
-        ):
-            left = NEUTRAL_PWM
-            right = NEUTRAL_PWM
+    def on_cmd_vel(self, msg: Twist):
 
-            if not self.timed_out:
-                self.get_logger().warning("/cmd_vel timeout -> neutral")
-                self.timed_out = True
-        else:
-            left = self.target_left
-            right = self.target_right
+        self.last_cmd_time = time.monotonic()
 
-        try:
-            # int16 little-endian 2개
-            packet = struct.pack(
-                "<hh",
-                int(left),
-                int(right)
+        # ----------------------------------------------------
+        # 입력 범위 제한
+        # ----------------------------------------------------
+        linear = max(
+            -1.0,
+            min(1.0, msg.linear.x)
+        )
+
+        angular = max(
+            -1.0,
+            min(1.0, msg.angular.z)
+        )
+
+        # ----------------------------------------------------
+        # Differential thrust mixing
+        #
+        # 전진:
+        # linear > 0, angular = 0
+        #
+        # 좌회전 / 우회전:
+        # angular 값으로 좌우 출력 차등
+        # ----------------------------------------------------
+        left_raw = linear - angular
+        right_raw = linear + angular
+
+        # ----------------------------------------------------
+        # -1.0 ~ +1.0 범위로 정규화
+        # ----------------------------------------------------
+        scale = max(
+            1.0,
+            abs(left_raw),
+            abs(right_raw)
+        )
+
+        left_norm = left_raw / scale
+        right_norm = right_raw / scale
+
+        # ----------------------------------------------------
+        # 기본 PWM 계산
+        # ----------------------------------------------------
+        left_pwm = self.calc_pwm(left_norm)
+        right_pwm = self.calc_pwm(right_norm)
+
+        # ----------------------------------------------------
+        # 추진기 장착 방향 보정
+        #
+        # LEFT(CCW)  : 그대로
+        # RIGHT(CW)  : PWM 반전
+        # ----------------------------------------------------
+        self.target_left = self.apply_direction(
+            left_pwm,
+            LEFT_REVERSED
+        )
+
+        self.target_right = self.apply_direction(
+            right_pwm,
+            RIGHT_REVERSED
+        )
+
+        self.get_logger().info(
+            f'CMD '
+            f'linear={linear:.2f} '
+            f'angular={angular:.2f} '
+            f'| raw L={left_pwm} R={right_pwm} '
+            f'| target L={self.target_left} '
+            f'R={self.target_right}'
+        )
+
+    # ========================================================
+    # 입력값 -> PWM
+    # ========================================================
+
+    def calc_pwm(self, val: float) -> int:
+
+        # 거의 0이면 중립
+        if abs(val) < 0.01:
+            return NEUTRAL_PWM
+
+        delta = bounded_integer(
+            round(val * MAX_DELTA),
+            -MAX_DELTA,
+            MAX_DELTA
+        )
+
+        # 전진
+        if delta > 0:
+            return (
+                NEUTRAL_PWM
+                + DEADBAND
+                + delta
             )
 
-            self.sock.sendto(packet, GATEWAY_ADDR)
+        # 후진
+        elif delta < 0:
+            return (
+                NEUTRAL_PWM
+                - DEADBAND
+                + delta
+            )
+
+        return NEUTRAL_PWM
+
+    # ========================================================
+    # PWM 방향 반전
+    #
+    # 예:
+    #
+    # 1487 기준
+    #
+    # 1572 -> 1402
+    # 1402 -> 1572
+    # ========================================================
+
+    @staticmethod
+    def reverse_pwm(us: int) -> int:
+        return NEUTRAL_PWM - (us - NEUTRAL_PWM)
+
+    # ========================================================
+    # 개별 추진기 방향 설정
+    # ========================================================
+
+    def apply_direction(
+        self,
+        pwm: int,
+        reversed_: bool
+    ) -> int:
+
+        if reversed_:
+            return self.reverse_pwm(pwm)
+
+        return pwm
+
+    # ========================================================
+    # 현재 PWM 방향 확인
+    # ========================================================
+
+    @staticmethod
+    def sign(v: int) -> int:
+
+        if v > NEUTRAL_PWM:
+            return 1
+
+        if v < NEUTRAL_PWM:
+            return -1
+
+        return 0
+
+    # ========================================================
+    # PWM ramp
+    # ========================================================
+
+    def ramp(
+        self,
+        cur: int,
+        target: int
+    ) -> int:
+
+        # 출력 줄이는 경우 즉시 적용
+        if (
+            abs(target - NEUTRAL_PWM)
+            <=
+            abs(cur - NEUTRAL_PWM)
+        ):
+            return target
+
+        # 출력 증가
+        if target > cur:
+            return min(
+                target,
+                cur + STEP_US
+            )
+
+        return max(
+            target,
+            cur - STEP_US
+        )
+
+    # ========================================================
+    # 20 Hz control loop
+    # ========================================================
+
+    def control_loop(self):
+
+        now = time.monotonic()
+
+        # ----------------------------------------------------
+        # /cmd_vel failsafe
+        # ----------------------------------------------------
+        if (
+            now - self.last_cmd_time
+            > CMD_TIMEOUT
+        ):
+            self.target_left = NEUTRAL_PWM
+            self.target_right = NEUTRAL_PWM
+
+        # ----------------------------------------------------
+        # 정방향 <-> 역방향 변경 감지
+        #
+        # 바로 반대 방향으로 돌리지 않고
+        # 잠깐 neutral 유지
+        # ----------------------------------------------------
+        direction_changed = (
+            self.sign(self.target_left)
+            * self.sign(self.cur_left)
+            < 0
+            or
+            self.sign(self.target_right)
+            * self.sign(self.cur_right)
+            < 0
+        )
+
+        if direction_changed:
+
+            if self.hold_until < now:
+                self.hold_until = (
+                    now + REVERSE_PAUSE
+                )
+
+            self.cur_left = NEUTRAL_PWM
+            self.cur_right = NEUTRAL_PWM
+
+        # ----------------------------------------------------
+        # reverse pause 중
+        # ----------------------------------------------------
+        elif self.hold_until > now:
+
+            self.cur_left = NEUTRAL_PWM
+            self.cur_right = NEUTRAL_PWM
+
+        # ----------------------------------------------------
+        # 정상 PWM 적용
+        # ----------------------------------------------------
+        else:
+
+            self.cur_left = self.ramp(
+                self.cur_left,
+                self.target_left
+            )
+
+            self.cur_right = self.ramp(
+                self.cur_right,
+                self.target_right
+            )
+
+        # ----------------------------------------------------
+        # UNO Q MCU로 전송
+        # ----------------------------------------------------
+        try:
+
+            self.get_logger().info(
+                f'SEND '
+                f'L={self.cur_left} '
+                f'R={self.cur_right}'
+            )
+
+            Bridge.notify(
+                'set_thruster_pwm',
+                self.cur_left,
+                self.cur_right
+            )
 
         except Exception as error:
-            self.get_logger().warning(f"UDP send error: {error}")
 
-    def send_neutral(self):
+            self.get_logger().warning(
+                f'Thruster Bridge RPC error: '
+                f'{error}'
+            )
+
+
+# ============================================================
+# main
+# ============================================================
+
+def main(args=None):
+
+    rclpy.init(args=args)
+
+    node = ThrusterDriverNode()
+
+    try:
+
+        rclpy.spin(node)
+
+    except KeyboardInterrupt:
+
+        pass
+
+    finally:
+
+        # ----------------------------------------------------
+        # 종료 시 반드시 중립
+        # ----------------------------------------------------
         try:
-            packet = struct.pack(
-                "<hh",
+
+            node.get_logger().info(
+                'SEND L=NEUTRAL R=NEUTRAL '
+                '(shutdown)'
+            )
+
+            Bridge.notify(
+                'set_thruster_pwm',
                 NEUTRAL_PWM,
                 NEUTRAL_PWM
             )
 
-            # 종료 시 여러 번 중립 전송
-            for _ in range(5):
-                self.sock.sendto(packet, GATEWAY_ADDR)
-                time.sleep(0.02)
+        except Exception:
+            pass
 
-            self.get_logger().info("Neutral PWM sent")
-
-        except Exception as error:
-            self.get_logger().warning(f"Failed to send neutral: {error}")
-
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = ThrusterDriverNode()
-
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.send_neutral()
         node.destroy_node()
+
         rclpy.shutdown()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
