@@ -9,4 +9,7 @@ profiles:
       - ArxContainer (0.7.0)
       - ArxTypeTraits (0.3.1)
       - OneWire (2.3.8)
+      - Adafruit NeoPixel (1.15.5)
+      # 6CAN: RPC 수신 멈춤 수정한 RPClite 복사본 (원본: ~/.arduino15/internal/Arduino_RPClite_0.3.1)
+      - dir: /home/arduino/6can_usv_ws/src/usv_sensors/libraries/Arduino_RPClite
 default_profile: default

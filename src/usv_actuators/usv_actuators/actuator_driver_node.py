@@ -62,6 +62,8 @@ class ActuatorDriverNode(Node):
         self.declare_parameter('margin', 3.0)
         self.declare_parameter('pump_manual_hold_s', 60.0)
         self.declare_parameter('led_manual_hold_s', 60.0)
+        # GCS 대시보드 LED 토글(X 버튼)은 켤 때 흰색(1,1,1)을 보낸다. True면 흰색 대신 무지개를 켠다.
+        self.declare_parameter('led_on_rainbow', True)
         self.declare_parameter('stale_timeout_s', 5.0)
 
         # 자동 제어 입력 (B1) — 구독만 하므로 B1 쪽은 아무것도 바뀌지 않는다
@@ -90,6 +92,11 @@ class ActuatorDriverNode(Node):
         self.last_quality_at = None
 
         self.create_timer(1.0, self.on_tick)
+        self.led_enabled = False      # 무지개 (MCU가 직접 그림)
+        self.create_subscription(Bool, '/actuator/led_on', self.on_led_on, 10)
+        # MCU가 재시작되면 LED가 꺼지는데 노드는 이미 보냈다고 기억해서 다시 안 보낸다.
+        # 주기적으로 현재 LED 상태를 다시 보낸다 (같은 색이면 MCU가 다시 그리지 않음).
+        self.create_timer(5.0, self.on_led_refresh)
 
         self.get_logger().info('Actuator driver node started')
 
@@ -111,6 +118,12 @@ class ActuatorDriverNode(Node):
         hold = self.get_parameter('led_manual_hold_s').value
         self.led_hold_until = self.now() + hold
         self.get_logger().info(f'수동 LED 지정 ({hold:.0f}초간 자동 억제)')
+        is_white = min(msg.r, msg.g, msg.b) >= 0.99
+        if is_white and self.get_parameter('led_on_rainbow').value:
+            self.set_rainbow(True)
+            return
+        if self.led_enabled:
+            self.set_rainbow(False)
         self.send_led(msg.r, msg.g, msg.b)
 
     def on_auto_mode(self, msg: Bool):
@@ -157,8 +170,43 @@ class ActuatorDriverNode(Node):
         now = self.now()
         if now >= self.pump_hold_until:
             self.send_pump(water_policy.pump_for(stage))
-        if now >= self.led_hold_until:
+        if now >= self.led_hold_until and not self.led_enabled:
             self.send_led(*water_policy.color_for(stage))
+
+    def on_led_on(self, msg: Bool):
+        self.set_rainbow(bool(msg.data))
+
+    def set_rainbow(self, on: bool):
+        """MCU에 무지개 on/off를 한 번만 보낸다. 응답을 확인하고 실패하면 재시도."""
+        for attempt in range(3):
+            try:
+                Bridge.call('set_led_rainbow', on, timeout=2)
+                break
+            except Exception as error:
+                self.get_logger().warning(
+                    f'Rainbow Bridge error ({attempt + 1}/3): {error}')
+        else:
+            return
+
+        self.led_enabled = on
+        self.get_logger().info(f'LED 무지개 {"ON" if on else "OFF"}')
+        # 대시보드 LED 표시등용: 무지개 중이면 켜짐(1,1,1), 꺼지면 꺼짐(0,0,0)으로 알린다.
+        state_msg = ColorRGBA()
+        state_msg.r = state_msg.g = state_msg.b = 1.0 if on else 0.0
+        state_msg.a = 1.0
+        self.led_state_pub.publish(state_msg)
+        # 꺼지면 MCU가 LED를 끈 상태 → 다음 수질 주기에 자동 색이 다시 적용된다.
+        self.applied_led = None if on else (0, 0, 0)
+
+    def on_led_refresh(self):
+        """MCU 재시작 등으로 LED 상태가 사라졌을 때 복구한다."""
+        try:
+            if self.led_enabled:
+                Bridge.notify('set_led_rainbow', True)
+            elif self.applied_led is not None:
+                Bridge.notify('set_actuator_led', *self.applied_led)
+        except Exception as error:
+            self.get_logger().warning(f'LED refresh Bridge error: {error}')
 
     def on_tick(self):
         """수질 데이터가 끊기면 펌프를 끈다.
