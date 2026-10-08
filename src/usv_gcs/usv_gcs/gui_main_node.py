@@ -151,7 +151,7 @@ class GuiMainNode(Node):
 
     def on_cmd_vel(self, msg: Twist):
         with self.state_lock:
-            self.state['cmd_vel'] = {'linear_x': msg.linear.x, 'angular_z': msg.angular.z}
+            self.state['cmd_vel'] = {'linear_x': msg.linear.x, 'angular_z': -msg.angular.z}  # 웹은 조이스틱 방향 그대로 표시
 
     def on_pump_cmd(self, msg: Bool):
         with self.state_lock:

@@ -127,7 +127,7 @@ class JoyToCmdNode(Node):
         self.current_angular = self._ramp(self.current_angular, target_angular, self.angular_ramp_rate, dt)
 
         twist.linear.x = self.current_linear
-        twist.angular.z = self.current_angular
+        twist.angular.z = -self.current_angular  # 추진기로 보내는 회전 방향만 반전
 
         self.cmd_pub.publish(twist)
 
