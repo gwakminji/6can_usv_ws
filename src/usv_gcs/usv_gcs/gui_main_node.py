@@ -61,6 +61,11 @@ from .dashboard_html import INDEX_HTML
 # TODO(GCS 담당자): 실제 배터리 사양이 정해지면 경고 기준치를 조정할 것.
 BATTERY_WARNING_PCT = 20
 
+# True: 실제 GPS를 무시하고 아래 위경도를 사용 / False: 실제 GPS 사용
+USE_FIXED_GPS = False
+INITIAL_LATITUDE = 37.3898
+INITIAL_LONGITUDE = 126.6390
+
 
 class GuiMainNode(Node):
 
@@ -68,6 +73,7 @@ class GuiMainNode(Node):
         super().__init__('gui_main_node')
 
         self.declare_parameter('http_port', 8000)
+        self.use_fixed_gps = USE_FIXED_GPS
         # 카메라 스트림은 GCS가 아니라 B1 보드 위 camera_streaming 패키지(http_video_server,
         # 고정 포트 8000)가 직접 서빙한다. GCS는 B1의 IP를 알 방법이 없으므로 launch 인자로
         # 받는다. 비워두면(기본값) create_app()이 config/gcs_params.yaml을 대신 읽는다 -
@@ -92,6 +98,13 @@ class GuiMainNode(Node):
             # 알 방법이 없으므로 None(불명)으로 둔다 - 대시보드 토글은 None이면 회색으로 표시.
             'led_on': None,
         }
+
+        if self.use_fixed_gps:
+            self.state['gps_fix'] = {
+                'latitude': INITIAL_LATITUDE,
+                'longitude': INITIAL_LONGITUDE,
+            }
+            self.state['gps_has_fix'] = True
 
         self.create_subscription(String, '/water_quality/data', self.on_water_quality, 10)
         self.create_subscription(NavSatFix, '/gps/fix', self.on_gps_fix, 10)
@@ -134,10 +147,14 @@ class GuiMainNode(Node):
             self.state['water_quality'] = data
 
     def on_gps_fix(self, msg: NavSatFix):
+        if self.use_fixed_gps:
+            return
         with self.state_lock:
             self.state['gps_fix'] = {'latitude': msg.latitude, 'longitude': msg.longitude}
 
     def on_gps_has_fix(self, msg: Bool):
+        if self.use_fixed_gps:
+            return
         with self.state_lock:
             self.state['gps_has_fix'] = msg.data
 
