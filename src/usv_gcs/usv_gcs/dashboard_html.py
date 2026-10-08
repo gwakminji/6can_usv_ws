@@ -76,7 +76,7 @@ INDEX_HTML = """<!doctype html>
   .led-toggle-label { font-size: 10px; color: #ccc; font-weight: bold; }
 
   #actuatorPanel {
-      /* ledPanel 바로 아래, 뽑기 패널 바로 위에 들어간다. 그 두 패널과 가로폭(200px)을
+      /* ledPanel 바로 아래, 뽑기 칸 바로 위에 들어간다. 그 칸과 가로폭(200px)을
          맞추고, sidebarX를 따라가야 해서 left는 updateResponsiveCanvas()가 매 프레임
          갱신한다. */
       position: absolute; top: 288px; left: 585px; width: 200px; box-sizing: border-box;
@@ -410,7 +410,8 @@ const assets = {
     red: new Image(),
     logoFacillity: new Image(),
     logoInu: new Image(),
-    logoYouth: new Image()
+    logoYouth: new Image(),
+    timeBanner: new Image()
 };
 
 // 이미지 파일명 매칭 설정
@@ -432,6 +433,7 @@ assets.red.src = "red.png";
 assets.logoFacillity.src = "logo_facillity.png";
 assets.logoInu.src = "logo_inu.png";
 assets.logoYouth.src = "logo_youth.png";
+assets.timeBanner.src = "time.png";
 
 // 시작/엔딩 화면 우측 하단에 로고 3개를 원본 비율 유지한 채 가로로 나열해서 그린다.
 function drawCornerLogos(bottomY, rightMargin = 15) {
@@ -648,8 +650,10 @@ canvas.addEventListener("click", (e) => {
             triggerEndingCheat();
             return;
         }
+        // 뽑기 버튼 (사이드바 맨 위 칸, 퀘스트 칸보다 위 - 그리는 쪽 gachaPanelY와
+        // 좌표를 맞춰둔 것, canvas.height는 항상 600 고정이라 여기 숫자도 고정값으로 둬도 된다)
         const sidebarX = canvas.width - 230;
-        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 425 && y <= 461) {
+        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 413 && y <= 439) {
             rollGachaFish();
             return;
         }
@@ -919,7 +923,7 @@ function updateResponsiveCanvas() {
 
     // 사이드바(HUD)는 항상 캔버스 우측 230px 폭 고정 - 캔버스가 넓어지면 그만큼 오른쪽으로 밀림.
     // #cameraPanel은 왼쪽 열(미니맵 아래)에 고정이라 따로 옮길 필요 없지만, #ledPanel/
-    // #actuatorPanel은 사이드바 안(수질 센서 패널과 뽑기 패널 사이)에 들어있어서 sidebarX를
+    // #actuatorPanel은 사이드바 안(수질 센서 패널과 뽑기/퀘스트 패널 사이)에 들어있어서 sidebarX를
     // 따라가야 한다.
     const sidebarX = canvas.width - 230;
     document.getElementById('ledPanel').style.left = (sidebarX + 15) + 'px';
@@ -1379,49 +1383,97 @@ function mainLoop() {
         ctx.font = "9px '맑은 고딕'";
         ctx.fillText(batterySummaryText(), sidebarX + 115, 236);
 
-        // 뽑기 패널 (조이스틱 버튼 하나로 실행 가능한 단일 뽑기 버튼 + 등급표)
+        // 뽑기 칸 (사이드바 맨 위 칸, 퀘스트 칸보다 위) - 압축된 버튼만 넣었다. 등급표/힌트
+        // 문구는 공간이 없어 뺐고, 버튼(마우스 클릭 - 클릭 핸들러 참고)과 조이스틱 Y 버튼
+        // (pollGamepadForGacha) 둘 다 그대로 rollGachaFish()를 실행한다.
         // #actuatorPanel(DOM, 실측 높이 약 99px → top:288 기준 바닥이 약 387) 바로
-        // 아래에 다른 구간과 같은 8px 간격만 두고 붙인다 (top=395). 높이(200)는 내용물
-        // 기준으로 맞춘 값이라, 바꾸려면 아래 fillRect/strokeRect 네 번째 인자(세로 길이)만
-        // 고치면 된다 - 그러면 패널 맨 아래가 그만큼 줄어들고(top은 그대로, bottom만 위로
-        // 올라옴), 안에 든 글자(버튼/등급표)는 안 건드려도 된다.
+        // 아래에 다른 구간과 같은 8px 간격만 두고 붙인다 (top=395).
+        const questPanelX = sidebarX + 15;
+        const gachaPanelY = 395;
+        const gachaPanelH = 55;
         ctx.fillStyle = "#150d08";
         ctx.strokeStyle = "#e29578";
         ctx.lineWidth = 2;
-        ctx.fillRect(sidebarX + 15, 395, 200, 190);
-        ctx.strokeRect(sidebarX + 15, 395, 200, 190);
-
-        ctx.fillStyle = "#ffd166";
-        ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("🎰 랜덤 물고기 뽑기", sidebarX + 115, 415);
-
-        // 뽑기 버튼 - 마우스 클릭(클릭 핸들러 참고) 또는 조이스틱 버튼(pollGamepadForGacha)으로 실행
-        ctx.fillStyle = "#3a2214";
-        ctx.strokeStyle = "#ffd166";
-        ctx.lineWidth = 1;
-        ctx.fillRect(sidebarX + 25, 425, 180, 36);
-        ctx.strokeRect(sidebarX + 25, 425, 180, 36);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 12px '맑은 고딕'";
-        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) ✨`, sidebarX + 115, 447);
-
-        ctx.fillStyle = "#a5a5a5";
-        ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 Y 버튼으로도 실행 가능)", sidebarX + 115, 475);
+        ctx.fillRect(questPanelX, gachaPanelY, 200, gachaPanelH);
+        ctx.strokeRect(questPanelX, gachaPanelY, 200, gachaPanelH);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 10px '맑은 고딕'";
-        ctx.fillText("[ 등급표 ]", sidebarX + 115, 493);
+        ctx.fillText("🎰 랜덤 물고기 뽑기", questPanelX + 100, gachaPanelY + 13);
 
-        let rarityRows = ["witch", "ghost", "santa", "pumpkin"].map((key, i) => ({
-            key, y: 509 + i * 18
-        }));
-        ctx.font = "9px '맑은 고딕'";
-        rarityRows.forEach(row => {
-            let info = specialFishTemplates[row.key];
-            ctx.fillStyle = "#ffffff";
-            ctx.fillText(`${info.rarity} · ${info.kor_name} +${info.score_val}점/초 (${info.chance}%)`, sidebarX + 115, row.y);
-        });
+        ctx.fillStyle = "#3a2214";
+        ctx.strokeStyle = "#ffd166";
+        ctx.lineWidth = 1;
+        ctx.fillRect(questPanelX + 10, gachaPanelY + 18, 180, 26);
+        ctx.strokeRect(questPanelX + 10, gachaPanelY + 18, 180, 26);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px '맑은 고딕'";
+        // 어떤 버튼을 눌러야 뽑기가 나가는지(조이스틱 Y) 바로 보이도록 버튼 문구에 적는다.
+        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) (Y) ✨`, questPanelX + 100, gachaPanelY + 35);
+
+        // 퀘스트 안내 (뽑기 칸 바로 밑, 사이드바 맨 아래까지 채운다). 물고기 능력 설명은
+        // 굳이 필요 없다는 피드백으로 뺐다.
+        const questPanelY = gachaPanelY + gachaPanelH + 5;
+        const questPanelH = 600 - questPanelY;
+        ctx.fillStyle = "#150d08";
+        ctx.strokeStyle = "#e29578";
+        ctx.lineWidth = 2;
+        ctx.fillRect(questPanelX, questPanelY, 200, questPanelH);
+        ctx.strokeRect(questPanelX, questPanelY, 200, questPanelH);
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 11px '맑은 고딕'";
+        ctx.fillText("[퀘스트 1] 푸른 호수 클리어!", questPanelX + 5, questPanelY + 18);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "10px '맑은 고딕'";
+        ctx.fillText("목표: [B]펌프 모드 변경 후", questPanelX + 5, questPanelY + 35);
+        ctx.fillText("[A]눌러 펌프 작동→쓰레기 제거!", questPanelX + 5, questPanelY + 50);
+        ctx.fillStyle = "#2ed573";
+        ctx.fillText("보상: 친환경 점수 + 코인 획득", questPanelX + 5, questPanelY + 65);
+
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 11px '맑은 고딕'";
+        ctx.fillText("[퀘스트 2] 동료를 찾아라!", questPanelX + 5, questPanelY + 85);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "10px '맑은 고딕'";
+        ctx.fillText("목표: [Y]눌러 코인으로", questPanelX + 5, questPanelY + 102);
+        ctx.fillText("랜덤 물고기 뽑기!", questPanelX + 5, questPanelY + 117);
+        ctx.fillStyle = "#2ed573";
+        ctx.fillText("보상: 물고기마다 보너스 점수", questPanelX + 5, questPanelY + 132);
+
+        ctx.textAlign = "center";
+
+        // 상단 중앙 남은시간 배너 (time.png, 알파 있는 PNG로 교체됨) - 기존 사이드바
+        // 타이머(⏱️ mm:ss)는 그대로 둔 채 추가로 띄우는 것. 원본 이미지(500x499)는 투명
+        // 배경에 플레이트만 있고, 그 플레이트 부분(x:25~485, y:168~315)만 잘라서 쓴다 -
+        // 아래 TIME_BANNER_SRC_*가 그 잘라낸 영역. 시간 숫자는 이미지 속 주황색 디지털
+        // 표시창 자리(플레이트 기준 가로 66%, 세로 53% 지점)에 맞춰 겹쳐 그린다.
+        if (assets.timeBanner.complete && assets.timeBanner.naturalWidth !== 0) {
+            const TIME_BANNER_SRC_X = 25, TIME_BANNER_SRC_Y = 168;
+            const TIME_BANNER_SRC_W = 460, TIME_BANNER_SRC_H = 147;
+            const timeBannerW = 220; // 너무 크다는 피드백으로 320 -> 220으로 축소
+            const timeBannerH = Math.round(timeBannerW * TIME_BANNER_SRC_H / TIME_BANNER_SRC_W);
+            const timeBannerX = lakeWidth / 2 - timeBannerW / 2;
+            const timeBannerY = 8;
+            ctx.drawImage(
+                assets.timeBanner,
+                TIME_BANNER_SRC_X, TIME_BANNER_SRC_Y, TIME_BANNER_SRC_W, TIME_BANNER_SRC_H,
+                timeBannerX, timeBannerY, timeBannerW, timeBannerH
+            );
+
+            const timeDisplayCx = timeBannerX + timeBannerW * 0.66;
+            const timeDisplayCy = timeBannerY + timeBannerH * 0.53;
+            let bannerMins = String(Math.floor(timeLeft / 60)).padStart(2, '0');
+            let bannerSecs = String(timeLeft % 60).padStart(2, '0');
+            ctx.save();
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "#ffcf7a";
+            ctx.font = "bold 20px 'Courier New'";
+            ctx.fillText(`${bannerMins}:${bannerSecs}`, timeDisplayCx, timeDisplayCy + 1);
+            ctx.restore();
+        }
 
         // 8. 좌측 상단 미니맵
         ctx.fillStyle = "#1c100a";
@@ -1473,63 +1525,6 @@ function mainLoop() {
             ctx.font = "bold 12px '맑은 고딕'";
             ctx.fillText(notificationText, lakeCenterX, 545);
         }
-
-        // 8-1. 퀘스트 안내 텍스트 (호수 화면 우측 상단 - 미니맵과 대칭으로, 사이드바 바로 옆에 붙인다)
-        const questBoxX = sidebarX - 155;
-        const questBoxY = 390; // 사이드바 바로 옆(우측)은 유지하고, 세로 위치만 맨 아래로
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(questBoxX, questBoxY, 145, 148);
-        ctx.strokeStyle = "#ffd166";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(questBoxX, questBoxY, 145, 148);
-
-        ctx.fillStyle = "#ffd166";
-        ctx.font = "bold 11px '맑은 고딕'";
-        ctx.textAlign = "left";
-        ctx.fillText("[퀘스트 1] 푸른 호수 클리어!", questBoxX + 5, questBoxY + 18);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "10px '맑은 고딕'";
-        ctx.fillText("목표: [B]펌프 모드 변경 후", questBoxX + 5, questBoxY + 35);
-        ctx.fillText("[A]눌러 펌프 작동→쓰레기 제거!", questBoxX + 5, questBoxY + 50);
-        ctx.fillStyle = "#2ed573";
-        ctx.fillText("보상: 친환경 점수 + 코인 획득", questBoxX + 5, questBoxY + 65);
-
-        ctx.fillStyle = "#ffd166";
-        ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("[퀘스트 2] 동료를 찾아라!", questBoxX + 5, questBoxY + 85);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "10px '맑은 고딕'";
-        ctx.fillText("목표: [Y]눌러 코인으로", questBoxX + 5, questBoxY + 102);
-        ctx.fillText("랜덤 물고기 뽑기!", questBoxX + 5, questBoxY + 117);
-        ctx.fillStyle = "#2ed573";
-        ctx.fillText("보상: 물고기마다 보너스 점수", questBoxX + 5, questBoxY + 132);
-
-        // 8-2. 물고기 능력 설명 (퀘스트 칸 바로 밑 - 같이 옮겨서 끊어지지 않게 붙여둔다)
-        const abilityBoxY = questBoxY + 148 + 2;
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(questBoxX, abilityBoxY, 145, 58);
-        ctx.strokeStyle = "#4cc9f0";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(questBoxX, abilityBoxY, 145, 58);
-
-        ctx.fillStyle = "#4cc9f0";
-        ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("[물고기 능력]", questBoxX + 5, abilityBoxY + 14);
-
-        // 세로 공간이 좁아서 4줄로 쭉 나열하는 대신 2x2 칸에 나눠 담아, 퀘스트 칸과
-        // 같은 크기(10px)의 글씨를 써도 박스 안에 다 들어가게 한다.
-        ctx.textAlign = "center";
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "10px '맑은 고딕'";
-        const abilityCellW = 145 / 2;
-        [
-            { x: questBoxX, y: abilityBoxY + 30, text: "🎩 피해 -30%" },
-            { x: questBoxX + abilityCellW, y: abilityBoxY + 30, text: "👻 +15G/10초" },
-            { x: questBoxX, y: abilityBoxY + 46, text: "🎅 점수 x1.4" },
-            { x: questBoxX + abilityCellW, y: abilityBoxY + 46, text: "👑 +50점/초" }
-        ].forEach(({ x: cx, y: cy, text }) => {
-            ctx.fillText(text, cx + abilityCellW / 2, cy);
-        });
 
         ctx.textAlign = "center";
 
