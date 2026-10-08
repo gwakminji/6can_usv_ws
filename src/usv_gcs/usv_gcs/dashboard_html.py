@@ -215,9 +215,10 @@ const gpsBounds = {
     maxLng: 126.6400
 };
 
-function convertGpsToPixel(lat, lng) {
-    let x = ((lng - gpsBounds.minLng) / (gpsBounds.maxLng - gpsBounds.minLng)) * mapWidth;
-    let y = (1.0 - (lat - gpsBounds.minLat) / (gpsBounds.maxLat - gpsBounds.minLat)) * mapHeight;
+function convertGpsToPixel(lat, lng, origin) {
+    // 매 게임의 시작 GPS 위치를 지도 중앙에 맞추고 이후 이동량만 반영한다.
+    let x = mapWidth / 2 + ((lng - origin.longitude) / (gpsBounds.maxLng - gpsBounds.minLng)) * mapWidth;
+    let y = mapHeight / 2 - ((lat - origin.latitude) / (gpsBounds.maxLat - gpsBounds.minLat)) * mapHeight;
 
     return {
         x: Math.max(30, Math.min(mapWidth - 30, x)),
@@ -226,6 +227,8 @@ function convertGpsToPixel(lat, lng) {
 }
 
 let isGpsReceived = false;
+let latestGpsFix = null;
+let gameGpsOrigin = null;
 
 // --- [미니맵] 구글 정적맵 위성 사진 위에 실제 GPS 좌표를 표시 ---
 // TODO: 구글 맵 Static API 키 채워넣기. 저장소가 public이라 여기 직접 커밋하지 말 것
@@ -271,9 +274,15 @@ async function refreshState() {
         banner.style.display = (s.gps_has_fix === false) ? 'block' : 'none';
 
         if (s.gps_fix) {
-            let pos = convertGpsToPixel(s.gps_fix.latitude, s.gps_fix.longitude);
-            targetX = pos.x;
-            targetY = pos.y;
+            latestGpsFix = s.gps_fix;
+            if (gameState === "game") {
+                // 시작 시 GPS가 없었다면 이 게임의 첫 수신 위치를 기준점으로 사용한다.
+                if (!gameGpsOrigin) gameGpsOrigin = { ...latestGpsFix };
+                let pos = convertGpsToPixel(s.gps_fix.latitude, s.gps_fix.longitude, gameGpsOrigin);
+                targetX = pos.x;
+                targetY = pos.y;
+                isGpsReceived = true;
+            }
             // refreshState 자체는 조종 체감 때문에 200ms마다 돌지만, 미니맵(구글 정적맵) 이미지는
             // 그 주기 그대로 새로 요청하면 초당 5번씩 API를 때리게 되므로 따로 1초 간격으로
             // 묶는다 - 보트 위치/방향 반응성과는 무관한 별개의 쓰로틀.
@@ -281,10 +290,6 @@ async function refreshState() {
             if (nowMs - lastMiniMapUpdateMs >= 1000) {
                 lastMiniMapUpdateMs = nowMs;
                 updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
-            }
-            if (!isGpsReceived) {
-                isGpsReceived = true;
-                console.log("🛰️ 첫 GPS 좌표 수신 완료!");
             }
         }
 
@@ -693,7 +698,8 @@ function startGame() {
     ownedSpecialFishes = { witch: 0, ghost: 0, santa: 0, pumpkin: 0 };
     targetX = mapWidth / 2;
     targetY = mapHeight / 2;
-    isGpsReceived = false;
+    gameGpsOrigin = latestGpsFix ? { ...latestGpsFix } : null;
+    isGpsReceived = gameGpsOrigin !== null;
     fishes = [];
     monsters = [];
     for (let i = 0; i < fishCount; i++) spawnRandomNormalFish();
@@ -1127,7 +1133,7 @@ function mainLoop() {
         const lakeWidth = sidebarX;
 
         let cameraX = Math.max(0, Math.min(targetX - lakeWidth / 2, mapWidth - lakeWidth));
-        let cameraY = Math.max(0, Math.min(targetY - 300, mapHeight - 600));
+        let cameraY = Math.max(0, Math.min(targetY - 400, mapHeight - 600)); // 보트를 화면 위에서 2/3 지점에 표시
 
         // 1. 배경(호수)
         if (assets.lake.complete && assets.lake.naturalWidth !== 0) {
