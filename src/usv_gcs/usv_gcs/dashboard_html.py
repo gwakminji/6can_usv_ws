@@ -19,8 +19,15 @@ INDEX_HTML = """<!doctype html>
       display: flex; justify-content: center; align-items: center; height: 100vh;
       font-family: '맑은 고딕', sans-serif; overflow: hidden;
   }
-  #gameContainer { position: relative; display: inline-block; transform-origin: center center; }
-  canvas { border: 3px solid #e29578; background-color: #2c1a11; box-shadow: 0 0 20px rgba(0,0,0,0.8); }
+  /* border/box-shadow는 canvas가 아니라 여기 둔다 - canvas에 border를 주면 그 두께만큼
+     캔버스의 실제 그림 영역(0,0)과 #gameContainer의 패딩 모서리가 어긋나서, 그 안에 absolute로
+     배치하는 #cameraPanel/#ledPanel/#actuatorPanel 같은 DOM 패널이 캔버스에 그린 사각형들과
+     몇 px씩 안 맞게 된다. */
+  #gameContainer {
+      position: relative; display: inline-block; transform-origin: center center;
+      border: 3px solid #e29578; box-shadow: 0 0 20px rgba(0,0,0,0.8);
+  }
+  canvas { display: block; background-color: #2c1a11; }
 
   #gpsBanner {
       position: absolute; top: 0; left: 0; right: 0; z-index: 20;
@@ -48,11 +55,31 @@ INDEX_HTML = """<!doctype html>
   .cam-box img { width: 100%; height: 100%; object-fit: cover; }
   .cam-warn { font-size: 9px; color: #fdd; text-align: center; padding: 0 4px; }
 
-  #actuatorPanel {
-      /* 우측 사이드바(수질 센서 모니터링 패널 바로 아래, 뽑기 패널 바로 위)에 들어간다.
-         그 두 패널과 가로폭(200px)을 맞추고, sidebarX를 따라가야 해서 left는
+  #ledPanel {
+      /* 우측 사이드바, 수질 센서 모니터링 패널 바로 아래 / 펌프제어 패널 바로 위에 들어간다.
+         펌프제어 패널과 가로폭(200px)을 맞추고, sidebarX를 따라가야 해서 left는
          updateResponsiveCanvas()가 매 프레임 갱신한다. */
-      position: absolute; top: 248px; left: 585px; width: 200px; box-sizing: border-box;
+      position: absolute; top: 248px; left: 585px; width: 200px; height: 32px;
+      box-sizing: border-box; display: flex; align-items: center; gap: 6px;
+      background-color: #150d08; border: 2px solid #e29578; padding: 0 8px; font-size: 11px;
+      z-index: 10; cursor: pointer;
+  }
+  #ledPanel:hover { background-color: #1c100a; }
+  #ledPanel .title {
+      color: #ffd166; font-weight: bold;
+  }
+  .led-toggle-light {
+      width: 10px; height: 10px; border-radius: 50%; background: #555;
+      box-shadow: inset 0 0 2px rgba(0,0,0,0.8); margin-left: auto; flex-shrink: 0;
+  }
+  .led-toggle-light.on { background: #3ddc55; box-shadow: 0 0 6px 2px rgba(61,220,85,0.8); }
+  .led-toggle-label { font-size: 10px; color: #ccc; font-weight: bold; }
+
+  #actuatorPanel {
+      /* ledPanel 바로 아래, 뽑기 패널 바로 위에 들어간다. 그 두 패널과 가로폭(200px)을
+         맞추고, sidebarX를 따라가야 해서 left는 updateResponsiveCanvas()가 매 프레임
+         갱신한다. */
+      position: absolute; top: 288px; left: 585px; width: 200px; box-sizing: border-box;
       background-color: #150d08; border: 2px solid #e29578; padding: 6px; font-size: 11px;
       z-index: 10;
   }
@@ -67,6 +94,7 @@ INDEX_HTML = """<!doctype html>
       vertical-align: middle; margin-right: 5px; box-shadow: inset 0 0 2px rgba(0,0,0,0.5);
   }
   .gamepad-btn-badge.badge-green { background: #3ddc55; }
+  .gamepad-btn-badge.badge-blue { background: #2f86eb; }
   .pump-fire-hint {
       display: flex; align-items: center; gap: 5px;
       margin-top: 6px; font-size: 11px; font-weight: bold; color: #ffd166;
@@ -99,14 +127,20 @@ INDEX_HTML = """<!doctype html>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
     <div id="cameraPanel" class="panel-hidden">
-        <div class="cam-box">
+        <div class="cam-box" id="surfaceCamBox">
             <span class="cam-title">📷 수면 (Surface)</span>
             <img id="surfaceCam" alt="수면 카메라 연결 중..." onerror="this.style.opacity=0.3">
         </div>
-        <div class="cam-box">
+        <div class="cam-box" id="underwaterCamBox">
             <span class="cam-title">🌊 수중 (Underwater)</span>
             <img id="underwaterCam" alt="수중 카메라 연결 중..." onerror="this.style.opacity=0.3">
         </div>
+    </div>
+
+    <div id="ledPanel" class="panel-hidden" onclick="toggleLed()">
+        <span class="gamepad-btn-badge badge-blue">X</span><span class="title">LED 제어</span>
+        <span class="led-toggle-light" id="ledToggleLight"></span>
+        <span class="led-toggle-label" id="ledToggleLabel">--</span>
     </div>
 
     <div id="actuatorPanel" class="panel-hidden">
@@ -125,11 +159,18 @@ INDEX_HTML = """<!doctype html>
     </div>
 </div>
 
+<!-- LED 이펙트(led_effect.json)를 그릴 숨김 호스트 - lottie-web의 canvas 렌더러가 이 div
+     안에 자기 <canvas>를 직접 만든다. 화면엔 안 보이지만(left:-9999px) 그 캔버스를 매 프레임
+     메인 게임 캔버스로 drawImage해서 보트 주변에 겹쳐 그린다. -->
+<div id="ledEffectHost" style="position:absolute; left:-9999px; top:-9999px; width:300px; height:300px; pointer-events:none;"></div>
+
+<script src="lottie.min.js"></script>
 <script>
-// --- [카메라 스트림 표시 여부] 웹 대시보드에서 카메라 화면을 쓰지 않기로 해서 껐다.
-// 다시 켜려면 이 값만 true로 바꾸면 된다 (아래 카메라 관련 코드는 그대로 둬도 됨 -
-// 이 플래그가 스트림 연결/패널 표시를 전부 막는다). README "카메라 표시 켜기/끄기" 참고.
-const SHOW_CAMERA = false;
+// --- [카메라별 표시 여부] 보트에 카메라가 수면/수중 두 대라 각각 따로 켜고 끌 수 있게
+// 뺐다. false면 해당 박스를 아예 숨긴다 (스트림 연결도 안 함).
+const SHOW_SURFACE_CAM = true;
+const SHOW_UNDERWATER_CAM = true;
+const ANY_CAM_SHOWN = SHOW_SURFACE_CAM || SHOW_UNDERWATER_CAM;
 
 // --- [카메라 스트림] B1 보드의 camera_streaming 패키지(http_video_server)가 MJPEG를
 // 직접 서빙한다 - GCS 자신이 아니라 B1 보드 위에서 도는 서버라 GCS의 location.hostname으로
@@ -139,19 +180,24 @@ const SHOW_CAMERA = false;
 // 폴백 없이 화면에 설정 안내를 띄운다 - 잘못된 주소로 붙는 것보다 낫다.
 const CAMERA_PORT = 8000;
 const cameraHost = "__CAMERA_HOST__";
-if (SHOW_CAMERA && cameraHost) {
-    document.getElementById('surfaceCam').src =
-        `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/surface/image_raw`;
-    document.getElementById('underwaterCam').src =
-        `http://${cameraHost}:${CAMERA_PORT}/stream?topic=/camera/underwater/image_raw`;
-} else if (SHOW_CAMERA) {
-    document.querySelectorAll('#cameraPanel .cam-box').forEach((box) => {
+
+function setupCamBox(enabled, boxId, imgId, topic) {
+    const box = document.getElementById(boxId);
+    if (!enabled) {
+        box.classList.add('panel-hidden');
+        return;
+    }
+    if (cameraHost) {
+        document.getElementById(imgId).src = `http://${cameraHost}:${CAMERA_PORT}/stream?topic=${topic}`;
+    } else {
         const warn = document.createElement('div');
         warn.className = 'cam-warn';
         warn.textContent = 'camera_host 미설정 (gcs_params.yaml)';
         box.appendChild(warn);
-    });
+    }
 }
+setupCamBox(SHOW_SURFACE_CAM, 'surfaceCamBox', 'surfaceCam', '/camera/surface/image_raw');
+setupCamBox(SHOW_UNDERWATER_CAM, 'underwaterCamBox', 'underwaterCam', '/camera/underwater/image_raw');
 
 // --- [펌프] 조종은 조이스틱 하나로만 하므로 펌프도 joy_to_cmd_node가 조이스틱 버튼으로
 // 직접 /actuator/pump_cmd를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
@@ -188,6 +234,7 @@ const googleApiKey = "";
 const miniMapImg = new Image();
 let currentLat = (gpsBounds.minLat + gpsBounds.maxLat) / 2;
 let currentLng = (gpsBounds.minLng + gpsBounds.maxLng) / 2;
+let lastMiniMapUpdateMs = 0; // refreshState()가 더 자주 돌아도 미니맵 이미지 요청은 1초 간격으로 묶기 위한 타임스탬프
 
 function updateMiniMapUrl(lat, lng) {
     currentLat = lat ?? currentLat;
@@ -227,7 +274,14 @@ async function refreshState() {
             let pos = convertGpsToPixel(s.gps_fix.latitude, s.gps_fix.longitude);
             targetX = pos.x;
             targetY = pos.y;
-            updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
+            // refreshState 자체는 조종 체감 때문에 200ms마다 돌지만, 미니맵(구글 정적맵) 이미지는
+            // 그 주기 그대로 새로 요청하면 초당 5번씩 API를 때리게 되므로 따로 1초 간격으로
+            // 묶는다 - 보트 위치/방향 반응성과는 무관한 별개의 쓰로틀.
+            const nowMs = Date.now();
+            if (nowMs - lastMiniMapUpdateMs >= 1000) {
+                lastMiniMapUpdateMs = nowMs;
+                updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
+            }
             if (!isGpsReceived) {
                 isGpsReceived = true;
                 console.log("🛰️ 첫 GPS 좌표 수신 완료!");
@@ -258,6 +312,7 @@ async function refreshState() {
 
         if (s.led_on !== null && s.led_on !== undefined) {
             ledOn = s.led_on;
+            updateLedUi();
         }
 
         batteryStatus = s.battery_status;
@@ -266,19 +321,50 @@ async function refreshState() {
         console.error(e);
     }
 }
-setInterval(refreshState, 1000);
+// 조이스틱 조작 결과(cmd_vel 방향, GPS 위치)가 화면에 반영되는 간격이기도 해서, 조종 체감
+// 딜레이를 줄이려고 1000ms -> 200ms로 올렸다. 실제 추진기로 나가는 /cmd_vel 자체의 램프
+// (joy_to_cmd_node의 linear_ramp_rate/angular_ramp_rate)는 안전 목적이라 그대로 둔다 -
+// 이건 어디까지나 이미 발행된 상태를 화면이 얼마나 자주 따라가서 보여주느냐의 문제다.
+setInterval(refreshState, 200);
 refreshState();
 // -----------------------
 
-// --- [LED 토글] 미니맵 아래 버튼(마우스 클릭) 또는 조이스틱 X 버튼으로 실행. 펌프/auto_mode와
+// --- [LED 이펙트] led_effect.json(Lottie 애니메이션)을 #ledEffectHost 안에 canvas 렌더러로
+// 띄워두고, 보트 주변엔 그 내부 canvas를 매 프레임 drawImage해서 겹쳐 그린다(아래 mainLoop
+// "7. LED 이펙트" 참고). 재생/정지는 updateLedUi()가 ledOn 값이 바뀔 때만 토글한다. ---
+const ledEffectAnim = lottie.loadAnimation({
+    container: document.getElementById('ledEffectHost'),
+    renderer: 'canvas',
+    loop: true,
+    autoplay: false,
+    path: 'led_effect.json'
+});
+let ledEffectCanvas = null;
+ledEffectAnim.addEventListener('DOMLoaded', () => {
+    ledEffectCanvas = document.getElementById('ledEffectHost').querySelector('canvas');
+});
+let ledEffectPlaying = false;
+
+// --- [LED 토글] 우측 사이드바 #ledPanel 클릭 또는 조이스틱 X 버튼으로 실행. 펌프/auto_mode와
 // 달리 조이스틱이 아니라 이 화면이 직접 /api/led로 명령을 보내는 유일한 액추에이터라서
-// gui_main_node.py에 쓰기용 엔드포인트를 따로 뒀다. 캔버스 좌표는 draw 루프와 클릭
-// 핸들러가 같이 써야 해서 상수로 뺐다 (미니맵 10,10~150,175 바로 아래). ---
-const LED_TOGGLE_RECT = { x: 10, y: 180, w: 140, h: 50 };
+// gui_main_node.py에 쓰기용 엔드포인트를 따로 뒀다. ---
+function updateLedUi() {
+    document.getElementById('ledToggleLight').classList.toggle('on', ledOn === true);
+    document.getElementById('ledToggleLabel').textContent = ledOn === null ? '--' : (ledOn ? 'ON' : 'OFF');
+
+    if (ledOn === true && !ledEffectPlaying) {
+        ledEffectPlaying = true;
+        ledEffectAnim.goToAndPlay(0, true);
+    } else if (ledOn !== true && ledEffectPlaying) {
+        ledEffectPlaying = false;
+        ledEffectAnim.pause();
+    }
+}
 
 function toggleLed() {
     const next = !ledOn;
     ledOn = next; // 서버 응답(최대 1초) 기다리지 않고 먼저 반영 - refreshState()가 실제 값으로 보정
+    updateLedUi();
     fetch('/api/led', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -294,6 +380,7 @@ function toggleLed() {
 // 이 값이 false인 동안만 실제 발행(cmd_vel/pump_cmd/auto_mode)을 멈춘다. ---
 function setGameActive(active) {
     ledOn = false; // 서버(gui_main_node.py)도 이 호출에서 LED를 강제로 끄니 화면도 미리 맞춰둔다
+    updateLedUi();
     fetch('/api/game_active', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -562,13 +649,9 @@ canvas.addEventListener("click", (e) => {
             return;
         }
         const sidebarX = canvas.width - 230;
-        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 380 && y <= 416) {
+        if (x >= sidebarX + 25 && x <= sidebarX + 205 && y >= 425 && y <= 461) {
             rollGachaFish();
             return;
-        }
-        if (x >= LED_TOGGLE_RECT.x && x <= LED_TOGGLE_RECT.x + LED_TOGGLE_RECT.w
-            && y >= LED_TOGGLE_RECT.y && y <= LED_TOGGLE_RECT.y + LED_TOGGLE_RECT.h) {
-            toggleLed();
         }
     } else if (gameState === "ending") {
         // "[BACK] 메인화면" 텍스트(우측 하단, 790,585에 오른쪽 정렬로 찍힘) 자체를 클릭 영역으로 사용
@@ -816,9 +899,11 @@ function batterySummaryText() {
 // 세로(600) 기준 좌표 로직은 그대로 두고, #gameContainer를 그 비율로 확대해서 창을 꽉 채운다
 // (모니터 해상도와 무관하게, 매 프레임 창 크기를 확인해서 동작).
 function updateResponsiveCanvas() {
-    // 카메라/펌프제어 패널은 조종 화면(game)에서만 보여준다 - 메인/엔딩 화면에서는 숨김.
+    // 카메라/LED/펌프제어 패널은 조종 화면(game)에서만 보여준다 - 메인/엔딩 화면에서는 숨김.
+    // (카메라 두 박스 각각의 on/off는 SHOW_SURFACE_CAM/SHOW_UNDERWATER_CAM이 따로 처리.)
     const inGame = (gameState === "game");
-    document.getElementById('cameraPanel').classList.toggle('panel-hidden', !inGame || !SHOW_CAMERA);
+    document.getElementById('cameraPanel').classList.toggle('panel-hidden', !inGame || !ANY_CAM_SHOWN);
+    document.getElementById('ledPanel').classList.toggle('panel-hidden', !inGame);
     document.getElementById('actuatorPanel').classList.toggle('panel-hidden', !inGame);
 
     const fillScale = window.innerHeight / canvas.height;
@@ -833,9 +918,11 @@ function updateResponsiveCanvas() {
     document.getElementById('gameContainer').style.transform = `scale(${scale})`;
 
     // 사이드바(HUD)는 항상 캔버스 우측 230px 폭 고정 - 캔버스가 넓어지면 그만큼 오른쪽으로 밀림.
-    // #cameraPanel은 왼쪽 열(미니맵 아래)에 고정이라 따로 옮길 필요 없지만, #actuatorPanel은
-    // 사이드바 안(수질 센서 패널과 뽑기 패널 사이)에 들어있어서 sidebarX를 따라가야 한다.
+    // #cameraPanel은 왼쪽 열(미니맵 아래)에 고정이라 따로 옮길 필요 없지만, #ledPanel/
+    // #actuatorPanel은 사이드바 안(수질 센서 패널과 뽑기 패널 사이)에 들어있어서 sidebarX를
+    // 따라가야 한다.
     const sidebarX = canvas.width - 230;
+    document.getElementById('ledPanel').style.left = (sidebarX + 15) + 'px';
     document.getElementById('actuatorPanel').style.left = (sidebarX + 15) + 'px';
 
     // 호수(월드) 폭도 뷰포트(sidebarX)만큼 늘려서 배경 이미지가 빈틈없이 다 채우도록 한다.
@@ -870,7 +957,7 @@ function pollGamepadForGacha() {
     prevGachaButtonPressed = pressed;
 }
 
-// --- [조이스틱 LED 버튼] 미니맵 아래 LED 토글을 마우스로 누르는 대신 조이스틱 X 버튼으로도
+// --- [조이스틱 LED 버튼] 우측 사이드바 #ledPanel을 마우스로 누르는 대신 조이스틱 X 버튼으로도
 // 켜고 끌 수 있게 한다. 원래 뽑기가 쓰던 자리(인덱스 3)를 그대로 재사용 - 이 값은
 // 실측 확인이 이미 끝난 값이다. ---
 const LED_GAMEPAD_BUTTON_INDEX = 3; // X 버튼 (실측 확인 완료)
@@ -1023,7 +1110,7 @@ function mainLoop() {
             // GPS 미수신 시 dead-reckoning 폴백: 조이스틱 입력 방향으로 화면상 위치를 직접 이동
             // (GPS가 들어오는 순간 refreshState()가 targetX/Y를 덮어써서 자연히 GPS 기준으로 전환됨)
             if (!isGpsReceived) {
-                let speed = 3.5; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0에서 낮춤)
+                let speed = 2.0; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0 -> 3.5 -> 2.0으로 낮춤)
                 let len = Math.hypot(dx, dy);
                 targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
                 targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
@@ -1138,11 +1225,16 @@ function mainLoop() {
         // 변수인 waterQuality(점수/연출용)와는 별개다. 기준은 usv_actuators의 water_policy.py와
         // 동일: 60 이상 좋음/초록, 40 미만 나쁨/빨강, 그 사이 보통/노랑.
         let currentAuraImg = assets.green;
+        // 초록은 지금 투명도(0.55)가 적당하다는 피드백이라 그대로 두고, 빨강/노랑(수질 나쁨/보통)만
+        // 더 선명하게 보이도록 투명도를 따로 올린다 - 색상별로 다른 값을 쓰기 위한 변수.
+        let auraAlpha = 0.55;
         if (sensorWQ.clarity_pct !== null && sensorWQ.clarity_pct !== undefined) {
             if (sensorWQ.clarity_pct < 40) {
                 currentAuraImg = assets.red;
+                auraAlpha = 0.85;
             } else if (sensorWQ.clarity_pct < 60) {
                 currentAuraImg = assets.yellow;
+                auraAlpha = 0.85;
             }
         }
 
@@ -1168,14 +1260,14 @@ function mainLoop() {
                 tAuraCtx.putImageData(imgData, 0, 0);
 
                 ctx.save();
-                ctx.globalAlpha = 0.9; 
-                let auraSize = 95;
+                ctx.globalAlpha = auraAlpha;
+                let auraSize = 75;
                 ctx.drawImage(tempAuraCanvas, screenBoatX - auraSize / 2, screenBoatY - auraSize / 2, auraSize, auraSize);
                 ctx.restore();
             } catch (err) {
                 ctx.save();
-                ctx.globalAlpha = 0.9;
-                ctx.drawImage(currentAuraImg, screenBoatX - 47, screenBoatY - 47, 95, 95);
+                ctx.globalAlpha = auraAlpha;
+                ctx.drawImage(currentAuraImg, screenBoatX - 37, screenBoatY - 37, 75, 75);
                 ctx.restore();
             }
         }
@@ -1213,7 +1305,18 @@ function mainLoop() {
             ctx.fill();
         }
 
-        // 6. 우측 UI 패널 영역
+        // 6. LED 이펙트 - LED가 켜진 동안만 보트 주변에 led_effect.json 애니메이션을 겹쳐 그린다.
+        // ledEffectCanvas는 lottie-web이 #ledEffectHost 안에 만든 내부 canvas로,
+        // updateLedUi()가 재생/정지만 토글하고 실제 그리기는 여기서 매 프레임 수행한다.
+        if (ledOn === true && ledEffectCanvas) {
+            const ledFxSize = 160;
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            ctx.drawImage(ledEffectCanvas, screenBoatX - ledFxSize / 2, screenBoatY - ledFxSize / 2, ledFxSize, ledFxSize);
+            ctx.restore();
+        }
+
+        // 7. 우측 UI 패널 영역
         ctx.fillStyle = "#2c1a11";
         ctx.fillRect(sidebarX, 0, 230, 600);
         ctx.strokeStyle = "#1c100a";
@@ -1277,38 +1380,41 @@ function mainLoop() {
         ctx.fillText(batterySummaryText(), sidebarX + 115, 236);
 
         // 뽑기 패널 (조이스틱 버튼 하나로 실행 가능한 단일 뽑기 버튼 + 등급표)
-        // 수질 센서 패널과의 사이에 펌프제어 패널(#actuatorPanel, DOM)이 끼어들면서
-        // 기존보다 90px 아래로 밀려났다.
+        // #actuatorPanel(DOM, 실측 높이 약 99px → top:288 기준 바닥이 약 387) 바로
+        // 아래에 다른 구간과 같은 8px 간격만 두고 붙인다 (top=395). 높이(200)는 내용물
+        // 기준으로 맞춘 값이라, 바꾸려면 아래 fillRect/strokeRect 네 번째 인자(세로 길이)만
+        // 고치면 된다 - 그러면 패널 맨 아래가 그만큼 줄어들고(top은 그대로, bottom만 위로
+        // 올라옴), 안에 든 글자(버튼/등급표)는 안 건드려도 된다.
         ctx.fillStyle = "#150d08";
         ctx.strokeStyle = "#e29578";
         ctx.lineWidth = 2;
-        ctx.fillRect(sidebarX + 15, 350, 200, 210);
-        ctx.strokeRect(sidebarX + 15, 350, 200, 210);
+        ctx.fillRect(sidebarX + 15, 395, 200, 190);
+        ctx.strokeRect(sidebarX + 15, 395, 200, 190);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("🎰 랜덤 물고기 뽑기", sidebarX + 115, 370);
+        ctx.fillText("🎰 랜덤 물고기 뽑기", sidebarX + 115, 415);
 
         // 뽑기 버튼 - 마우스 클릭(클릭 핸들러 참고) 또는 조이스틱 버튼(pollGamepadForGacha)으로 실행
         ctx.fillStyle = "#3a2214";
         ctx.strokeStyle = "#ffd166";
         ctx.lineWidth = 1;
-        ctx.fillRect(sidebarX + 25, 380, 180, 36);
-        ctx.strokeRect(sidebarX + 25, 380, 180, 36);
+        ctx.fillRect(sidebarX + 25, 425, 180, 36);
+        ctx.strokeRect(sidebarX + 25, 425, 180, 36);
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 12px '맑은 고딕'";
-        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) ✨`, sidebarX + 115, 402);
+        ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) ✨`, sidebarX + 115, 447);
 
         ctx.fillStyle = "#a5a5a5";
         ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 Y 버튼으로도 실행 가능)", sidebarX + 115, 430);
+        ctx.fillText("(조이스틱 Y 버튼으로도 실행 가능)", sidebarX + 115, 475);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 10px '맑은 고딕'";
-        ctx.fillText("[ 등급표 ]", sidebarX + 115, 448);
+        ctx.fillText("[ 등급표 ]", sidebarX + 115, 493);
 
         let rarityRows = ["witch", "ghost", "santa", "pumpkin"].map((key, i) => ({
-            key, y: 464 + i * 18
+            key, y: 509 + i * 18
         }));
         ctx.font = "9px '맑은 고딕'";
         rarityRows.forEach(row => {
@@ -1317,7 +1423,7 @@ function mainLoop() {
             ctx.fillText(`${info.rarity} · ${info.kor_name} +${info.score_val}점/초 (${info.chance}%)`, sidebarX + 115, row.y);
         });
 
-        // 7. 좌측 상단 미니맵
+        // 8. 좌측 상단 미니맵
         ctx.fillStyle = "#1c100a";
         ctx.strokeStyle = "#ffd166";
         ctx.lineWidth = 2;
@@ -1354,25 +1460,7 @@ function mainLoop() {
         ctx.font = "bold 9px 'Courier New'";
         ctx.fillText(`X: ${Math.floor(targetX)}, Y: ${Math.floor(targetY)}`, 80, 162);
 
-        // 7-1. LED on/off 토글 (미니맵 바로 아래) - 마우스 클릭(클릭 핸들러 참고) 또는
-        // 조이스틱 X 버튼(pollGamepadForLed)으로 실행. ledOn이 null이면 실제 상태를 아직
-        // 못 받은 것이라 회색으로 표시한다.
-        ctx.fillStyle = ledOn === null ? "#3a3a3a" : (ledOn ? "#2ed573" : "#555555");
-        ctx.strokeStyle = "#ffd166";
-        ctx.lineWidth = 2;
-        ctx.fillRect(LED_TOGGLE_RECT.x, LED_TOGGLE_RECT.y, LED_TOGGLE_RECT.w, LED_TOGGLE_RECT.h);
-        ctx.strokeRect(LED_TOGGLE_RECT.x, LED_TOGGLE_RECT.y, LED_TOGGLE_RECT.w, LED_TOGGLE_RECT.h);
-
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 12px '맑은 고딕'";
-        const ledLabel = ledOn === null ? "💡 LED (--)" : `💡 LED (${ledOn ? "ON" : "OFF"})`;
-        ctx.fillText(ledLabel, LED_TOGGLE_RECT.x + LED_TOGGLE_RECT.w / 2, LED_TOGGLE_RECT.y + 22);
-
-        ctx.fillStyle = "#a5a5a5";
-        ctx.font = "9px '맑은 고딕'";
-        ctx.fillText("(조이스틱 X 버튼으로도 켜고 끌 수 있음)", LED_TOGGLE_RECT.x + LED_TOGGLE_RECT.w / 2, LED_TOGGLE_RECT.y + 40);
-
-        // 8. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
+        // 9. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
         const lakeCenterX = lakeWidth / 2;
         if (notificationText !== "") {
             ctx.fillStyle = "#150d08";
@@ -1386,44 +1474,47 @@ function mainLoop() {
             ctx.fillText(notificationText, lakeCenterX, 545);
         }
 
-        // 8-1. 퀘스트 안내 텍스트 (좌측 하단)
+        // 8-1. 퀘스트 안내 텍스트 (호수 화면 우측 상단 - 미니맵과 대칭으로, 사이드바 바로 옆에 붙인다)
+        const questBoxX = sidebarX - 155;
+        const questBoxY = 390; // 사이드바 바로 옆(우측)은 유지하고, 세로 위치만 맨 아래로
         ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(10, 390, 145, 148);
+        ctx.fillRect(questBoxX, questBoxY, 145, 148);
         ctx.strokeStyle = "#ffd166";
         ctx.lineWidth = 1;
-        ctx.strokeRect(10, 390, 145, 148);
+        ctx.strokeRect(questBoxX, questBoxY, 145, 148);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 11px '맑은 고딕'";
         ctx.textAlign = "left";
-        ctx.fillText("[퀘스트 1] 푸른 호수 클리어!", 15, 408);
+        ctx.fillText("[퀘스트 1] 푸른 호수 클리어!", questBoxX + 5, questBoxY + 18);
         ctx.fillStyle = "#ffffff";
         ctx.font = "10px '맑은 고딕'";
-        ctx.fillText("목표: [B]펌프 모드 변경 후", 15, 425);
-        ctx.fillText("[A]눌러 펌프 작동→쓰레기 제거!", 15, 440);
+        ctx.fillText("목표: [B]펌프 모드 변경 후", questBoxX + 5, questBoxY + 35);
+        ctx.fillText("[A]눌러 펌프 작동→쓰레기 제거!", questBoxX + 5, questBoxY + 50);
         ctx.fillStyle = "#2ed573";
-        ctx.fillText("보상: 친환경 점수 + 코인 획득", 15, 455);
+        ctx.fillText("보상: 친환경 점수 + 코인 획득", questBoxX + 5, questBoxY + 65);
 
         ctx.fillStyle = "#ffd166";
         ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("[퀘스트 2] 동료를 찾아라!", 15, 475);
+        ctx.fillText("[퀘스트 2] 동료를 찾아라!", questBoxX + 5, questBoxY + 85);
         ctx.fillStyle = "#ffffff";
         ctx.font = "10px '맑은 고딕'";
-        ctx.fillText("목표: [Y]눌러 코인으로", 15, 492);
-        ctx.fillText("랜덤 물고기 뽑기!", 15, 507);
+        ctx.fillText("목표: [Y]눌러 코인으로", questBoxX + 5, questBoxY + 102);
+        ctx.fillText("랜덤 물고기 뽑기!", questBoxX + 5, questBoxY + 117);
         ctx.fillStyle = "#2ed573";
-        ctx.fillText("보상: 물고기마다 보너스 점수", 15, 522);
+        ctx.fillText("보상: 물고기마다 보너스 점수", questBoxX + 5, questBoxY + 132);
 
-        // 8-2. 물고기 능력 설명 (퀘스트 칸 바로 밑)
+        // 8-2. 물고기 능력 설명 (퀘스트 칸 바로 밑 - 같이 옮겨서 끊어지지 않게 붙여둔다)
+        const abilityBoxY = questBoxY + 148 + 2;
         ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(10, 540, 145, 58);
+        ctx.fillRect(questBoxX, abilityBoxY, 145, 58);
         ctx.strokeStyle = "#4cc9f0";
         ctx.lineWidth = 1;
-        ctx.strokeRect(10, 540, 145, 58);
+        ctx.strokeRect(questBoxX, abilityBoxY, 145, 58);
 
         ctx.fillStyle = "#4cc9f0";
         ctx.font = "bold 11px '맑은 고딕'";
-        ctx.fillText("[물고기 능력]", 15, 554);
+        ctx.fillText("[물고기 능력]", questBoxX + 5, abilityBoxY + 14);
 
         // 세로 공간이 좁아서 4줄로 쭉 나열하는 대신 2x2 칸에 나눠 담아, 퀘스트 칸과
         // 같은 크기(10px)의 글씨를 써도 박스 안에 다 들어가게 한다.
@@ -1432,20 +1523,20 @@ function mainLoop() {
         ctx.font = "10px '맑은 고딕'";
         const abilityCellW = 145 / 2;
         [
-            { x: 10, y: 570, text: "🎩 피해 -30%" },
-            { x: 10 + abilityCellW, y: 570, text: "👻 +15G/10초" },
-            { x: 10, y: 586, text: "🎅 점수 x1.4" },
-            { x: 10 + abilityCellW, y: 586, text: "👑 +50점/초" }
+            { x: questBoxX, y: abilityBoxY + 30, text: "🎩 피해 -30%" },
+            { x: questBoxX + abilityCellW, y: abilityBoxY + 30, text: "👻 +15G/10초" },
+            { x: questBoxX, y: abilityBoxY + 46, text: "🎅 점수 x1.4" },
+            { x: questBoxX + abilityCellW, y: abilityBoxY + 46, text: "👑 +50점/초" }
         ].forEach(({ x: cx, y: cy, text }) => {
             ctx.fillText(text, cx + abilityCellW / 2, cy);
         });
 
         ctx.textAlign = "center";
 
-        // 9. 특별 물고기 영입 카드 팝업
+        // 10. 특별 물고기 영입 카드 팝업
         if (activeCardShown && activeCardKey) {
             ctx.fillStyle = "rgba(0,0,0,0.5)";
-            ctx.fillRect(0, 0, lakeWidth, 600);
+            ctx.fillRect(0, 0, lakeWidth, 520);
 
             const cardX = lakeCenterX - 110;
             ctx.fillStyle = "#110a05";

@@ -147,8 +147,8 @@ flowchart LR
 | `GACHA_GAMEPAD_BUTTON_INDEX` | `dashboard_html.py` 상수 | `2`(Y, 추정치) | 실기기로 검증 후 정확한 값으로 |
 | `max_pwm` | `actuators.launch.py` 인자 | `255` | 실제 모터 드라이버 PWM 사양 확정 후 |
 | `bad_below` / `good_above` / `*_manual_hold_s` | `actuators.launch.py` 인자 | `40.0` / `60.0` / `60.0`초 | 실측 수질 범위·자동/수동 우선 시간 조정 시 |
-| `SHOW_CAMERA` | `src/usv_gcs/usv_gcs/dashboard_html.py` 상단 상수 | `false` | 웹 대시보드에 카메라 화면을 다시 띄우려면 `true`로 |
 | `BACK_GAMEPAD_BUTTON_INDEX` | `dashboard_html.py` 상수 | `8`(추정치) | 실기기로 검증 후 정확한 값으로 |
+| `SHOW_SURFACE_CAM` / `SHOW_UNDERWATER_CAM` | `dashboard_html.py` 상단 상수 | `true` / `true` | 수면/수중 카메라 박스를 각각 껐다 켜려면 `false`/`true`로 |
 | `surface_device` / `underwater_device` | `camera_streaming.launch.py` 인자 | `/dev/video0` / `/dev/video4` | USB 카메라 재연결로 장치 번호가 바뀌었을 때 (`v4l2-ctl --list-devices`로 확인) |
 
 `dashboard_html.py`처럼 코드 상수를 바꾼 경우, 파일만 고치고 끝이 아니라
