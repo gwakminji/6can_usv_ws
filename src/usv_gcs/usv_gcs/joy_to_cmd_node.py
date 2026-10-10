@@ -12,28 +12,19 @@ class JoyToCmdNode(Node):
     def __init__(self):
         super().__init__('joy_to_cmd_node')
 
-        # --- Parameters ---
-        self.declare_parameter('linear_axis', 1)      # 전후진 축 번호
-        self.declare_parameter('angular_axis', 0)     # 좌우 회전 축 번호
-        self.declare_parameter('linear_scale', 1.0)    # m/s
-        # 실측: 오른쪽으로 밀면 axes[0]=-1.0 이라서, 우회전 시 angular가 +가 되도록 부호 반전
-        self.declare_parameter('angular_scale', -1.0)   # rad/s
+        # ===== 사용자 설정: 축·버튼 번호, 속도 제한 =====
+        # launch 인자로 전달한 값이 아래 기본값보다 우선한다.
+        self.declare_parameter('linear_axis', 1)       # 전진/후진 축
+        self.declare_parameter('angular_axis', 0)      # 좌회전/우회전 축
+        self.declare_parameter('linear_scale', 1.0)     # m/s
+        self.declare_parameter('angular_scale', -1.0)   # rad/s, 조이스틱 축 방향 보정
         self.declare_parameter('deadzone', 0.05)
-        # 조이스틱을 급격히 꺾어도 출력값이 즉시 튀지 않고 서서히 따라가도록 하는 램프
-        # 속도(초당 변화량). linear_scale/angular_scale이 만드는 최대값 기준 단위이므로,
-        # 예를 들어 linear_scale=1.0에 linear_ramp_rate=1.0이면 0->최대까지 약 1초 걸린다.
-        self.declare_parameter('linear_ramp_rate', 0.2)   # m/s^2
+        self.declare_parameter('linear_ramp_rate', 0.2)  # m/s^2, 속도 변화 제한
         self.declare_parameter('angular_ramp_rate', 0.4)  # rad/s^2
-        # 펌프/워터캐논 작동 버튼 번호. 조종은 조이스틱 하나로만 하므로여기서 발행한다. 
-        # 0번(Xbox 계열 컨트롤러 기준 A 버튼)으로 확정. 
-        # 실제 조이스틱에서 다르게 나오면 코드는 그대로 두고 pump_button 인자만 바꾸면 됨.
-        self.declare_parameter('pump_button', 0)
-        # 자동/수동 제어 토글 버튼 번호.
-        # pump_button과 동일한 패턴으로 여기서 토글 발행한다. 
-        # 1번(Xbox 계열 기준 B 버튼) 지정.
-        self.declare_parameter('auto_button', 1)
-        self.declare_parameter('enable_heartbeat', False)   # /gcs/heartbeat 발행 여부 - 설계 미확정, 팀 논의 후 True로 전환
-        self.declare_parameter('heartbeat_period_sec', 0.5)  # watchdog timeout보다 충분히 짧게 설정 필요
+        self.declare_parameter('pump_button', 0)       # Xbox A 버튼
+        self.declare_parameter('auto_button', 1)       # Xbox B 버튼
+        self.declare_parameter('enable_heartbeat', False)
+        self.declare_parameter('heartbeat_period_sec', 0.5)
 
         self.linear_axis = self.get_parameter('linear_axis').value
         self.angular_axis = self.get_parameter('angular_axis').value
@@ -55,15 +46,9 @@ class JoyToCmdNode(Node):
 
         self.joy_sub = self.create_subscription(Joy, '/joy', self.joy_callback, qos)
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', qos)
-        # gui_main_node도 이 토픽을 구독해서 대시보드에 펌프 상태를 표시만 한다 (발행 X).
         self.pump_pub = self.create_publisher(Bool, '/actuator/pump_cmd', qos)
-        # gui_main_node/B2 둘 다 이 토픽을 구독. gui_main_node는 표시만, B2는 이 값으로
-        # 자동/수동을 나눈다 (발행 X, 여기서만 발행).
         self.auto_mode_pub = self.create_publisher(Bool, '/actuator/auto_mode', qos)
-        # gui_main_node.py가 대시보드의 gameState(START 눌렀는지)를 중계해준다. 이 프로세스는
-        # 웹페이지의 JS 상태를 직접 볼 방법이 없어서 별도 토픽으로 받아야 한다. 기본값
-        # False - 배 이동(cmd_vel)은 게임 상태와 무관하게 항상 되지만, 펌프/자동모드는 게임이
-        # 실제로 진행 중일 때만(gameState === "game") 허용한다 - main/ending 화면에서는 막는다.
+        # 게임 상태는 펌프·자동 모드에만 적용한다. 배 이동은 항상 허용한다.
         self.create_subscription(Bool, '/gcs/game_active', self.on_game_active, qos)
         self.game_active = False
 
@@ -71,8 +56,6 @@ class JoyToCmdNode(Node):
         self.current_linear = 0.0
         self.current_angular = 0.0
 
-        # heartbeat: joy -> cmd_vel 경로가 살아있다는 신호. 발행 주체/주기는 아직 미확정이라
-        # enable_heartbeat 파라미터로 켜고 끌 수 있게만 해둠 (기본 off).
         self.heartbeat_pub = None
         if self.enable_heartbeat:
             self.heartbeat_pub = self.create_publisher(Header, '/gcs/heartbeat', qos)
@@ -81,12 +64,11 @@ class JoyToCmdNode(Node):
             )
 
         self.get_logger().info('joy_to_cmd_node started')
-        self.prev_pump_state = False # 이전 펌프 상태를 저장하여 버튼 상태 변화 감지용
-        self.prev_auto_button_state = False  # 버튼 눌림 자체의 변화 감지용 (edge trigger)
-        self.auto_mode = False  # 기본값: 수동 제어 (B 버튼으로 자동으로 전환 가능)
+        self.prev_pump_state = False
+        self.prev_auto_button_state = False
+        self.auto_mode = False
 
-        # B2가 노드 시작 직후 켜져도 기본값을 바로 알 수 있도록 시작 시 한 번 발행.
-        # (버튼을 누르기 전까지는 /joy 콜백이 안 돌아서 값이 안 나감)
+        # 첫 조이스틱 입력 전에도 수동 모드를 전달한다.
         auto_msg = Bool()
         auto_msg.data = self.auto_mode
         self.auto_mode_pub.publish(auto_msg)
@@ -106,7 +88,6 @@ class JoyToCmdNode(Node):
 
     def joy_callback(self, msg: Joy):
         now = self.get_clock().now()
-        # 첫 콜백이라 이전 시각이 없으면 dt=0 -> _ramp()가 그대로 target을 반환한다.
         dt = (now - self._last_joy_time).nanoseconds / 1e9 if self._last_joy_time else 0.0
         self._last_joy_time = now
 
@@ -119,8 +100,6 @@ class JoyToCmdNode(Node):
         if abs(angular) < self.deadzone:
             angular = 0.0
 
-        # 배 이동은 게임 상태와 무관하게 항상 된다 - joy_node/joy_to_cmd_node는 대시보드
-        # 게임과 별개로 실제 배를 조종하는 경로라서 여기엔 게이팅이 없다.
         target_linear = linear * self.linear_scale
         target_angular = angular * self.angular_scale
         self.current_linear = self._ramp(self.current_linear, target_linear, self.linear_ramp_rate, dt)
@@ -131,17 +110,9 @@ class JoyToCmdNode(Node):
 
         self.cmd_pub.publish(twist)
 
-        # 펌프/자동모드는 눌림 자체(edge)는 game_active와 무관하게 항상 추적하되, 실제
-        # 발행/토글은 게임이 진행 중일 때(gameState === "game")만 한다 - main/ending
-        # 화면에서 버튼을 눌러도 아무 일도 안 일어난다. edge를 항상 추적해야, 게임이 아닐 때
-        # 버튼을 누르고 있다가 게임이 시작되는 순간 눌림 상태가 이미 true라서 edge를
-        # 놓치는 일이 없다.
+        # 버튼 눌림 상태는 항상 추적하고, 명령은 게임 중에만 발행한다.
         if len(msg.buttons) > self.pump_button:
             new_state = bool(msg.buttons[self.pump_button])
-            # 자동 모드일 때는 A 버튼을 눌러도 /actuator/pump_cmd 자체를 발행하지 않는다 -
-            # 펌프 on/off는 수동 모드에서만 바뀌어야 하고, GCS 화면(pump_on)도 이 토픽으로
-            # 갱신되므로 여기서 막아야 화면까지 같이 안 바뀐다 (actuator_driver_node도
-            # 자동 모드 중엔 이 명령을 무시하지만, 애초에 GCS에서부터 안 보내는 게 맞다).
             if self.game_active and not self.auto_mode and new_state != self.prev_pump_state:
                 pump_msg = Bool()
                 pump_msg.data = new_state
@@ -151,7 +122,6 @@ class JoyToCmdNode(Node):
         if len(msg.buttons) > self.auto_button:
             button_pressed = bool(msg.buttons[self.auto_button])
             if self.game_active and button_pressed and not self.prev_auto_button_state:
-                # 버튼을 누르는 순간(edge)에만 토글 - 누르고 있는 동안 계속 뒤집히지 않게
                 self.auto_mode = not self.auto_mode
                 auto_msg = Bool()
                 auto_msg.data = self.auto_mode
@@ -161,11 +131,7 @@ class JoyToCmdNode(Node):
     def on_game_active(self, msg: Bool):
         self.game_active = bool(msg.data)
 
-        # 게임이 (다시) 시작될 때도, 방금 끝났을 때도 항상 같은 초기 상태(자동모드는 수동)로
-        # 되돌린다 - gui_main_node.py가 /api/game_active를 호출하는 두 지점(시작/종료)마다
-        # 이 콜백이 오므로 여기 한 곳에서 양쪽 다 처리된다. LED를 초기 off로 되돌리는 건
-        # gui_main_node.py 쪽(같은 /api/game_active 핸들러)이 맡는다 - LED는 이 노드가 아니라
-        # 그쪽이 발행하는 토픽이라서.
+        # 게임 시작과 종료 시 자동 모드를 수동으로 초기화한다.
         if self.auto_mode:
             self.auto_mode = False
             auto_msg = Bool()

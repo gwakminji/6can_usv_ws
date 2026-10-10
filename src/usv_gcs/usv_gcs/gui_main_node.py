@@ -1,41 +1,4 @@
-"""gui_main_node — usv_gcs 패키지 (Raspberry Pi).
-
-구독:
-  /water_quality/data [std_msgs/msg/String]         JSON 파싱해서 표시
-  /gps/fix             [sensor_msgs/msg/NavSatFix]
-  /gps/has_fix         [std_msgs/msg/Bool]           false면 'GPS 신호 없음' 배너
-  /battery/status      [std_msgs/msg/String]         JSON 파싱: thruster1, thruster2,
-                                                       pump_ctrl, sensor_board 각각
-                                                       {current_a, percentage}
-  /cmd_vel             [geometry_msgs/msg/Twist]     조이스틱 인디케이터 표시용
-  /actuator/pump_cmd   [std_msgs/msg/Bool]           joy_to_cmd_node가 조이스틱 버튼으로
-                                                       발행 - 여기선 상태 표시용으로만 구독
-  /actuator/pump_state [std_msgs/msg/Bool]           B2가 발행하는 펌프 실제 상태(명령과
-                                                       다를 수 있음) - 상태 표시용으로만 구독
-  /actuator/auto_mode  [std_msgs/msg/Bool]           joy_to_cmd_node가 조이스틱 버튼으로
-                                                       발행 - 여기선 상태 표시용으로만 구독
-
-조종은 조이스틱 하나로만 하므로(마우스로 GUI 버튼을 누를 사람이 없음) 펌프와 자동/수동
-전환은 joy_to_cmd_node가 조이스틱 버튼으로 발행하고, 이 노드는 그 상태를 /api/state로
-보여주기만 한다.
-
-듀얼 카메라 MJPEG 스트림은 이 노드가 직접 발행하지 않는다. B1 보드의 camera_streaming
-패키지(별도 컨테이너)가 http_video_server로 /camera/surface/image_raw,
-/camera/underwater/image_raw 토픽을 B1 자신의 8000번 포트에서 HTTP로 변환해 서빙하고,
-이 노드의 웹 대시보드(dashboard_html.py)는 camera_host 파라미터로 그 주소를 알아내
-<img> 태그로 그대로 표시한다.
-
-camera_host는 두 가지 방법으로 줄 수 있다: (1) launch 인자로 매번 넘기거나
-(2) config/gcs_params.yaml에 한 번 적어두기. launch 인자를 안 넘기면(빈 문자열 기본값)
-이 노드가 gcs_params.yaml을 읽어서 대신 쓴다 — launch 인자가 우선이다.
-
-전류 센서 4개(추진기1/2, 펌프 제어부, 센서 보드)는 전부 B1 보드에 물려있어서
-usv_sensors의 current_sensor_node가 /battery/status 하나로 통합 발행한다. 예전에
-usv_actuators가 따로 발행하던 /battery/thruster, /battery/actuator는 삭제되었다.
-
-배터리 경고 기준(BATTERY_WARNING_PCT)은 구체적인 배터리 사양이 아직 정해지지 않아서 20%로
-임시 지정했다. 실제 배터리 사양이 정해지면 이 값을 조정해야 한다.
-"""
+"""ROS 상태를 수집해 웹 대시보드에 제공하는 GCS 노드."""
 
 import json
 import os
@@ -58,10 +21,10 @@ from std_msgs.msg import String
 
 from .dashboard_html import INDEX_HTML
 
-# TODO(GCS 담당자): 실제 배터리 사양이 정해지면 경고 기준치를 조정할 것.
+# ===== 사용자 설정 =====
+# 배터리 사양 확정 후 경고 기준을 조정한다.
 BATTERY_WARNING_PCT = 20
-
-# True: 실제 GPS를 무시하고 아래 위경도를 사용 / False: 실제 GPS 사용
+# 테스트할 때만 True로 설정한다. GPS는 웹 미니맵에서만 사용한다.
 USE_FIXED_GPS = False
 INITIAL_LATITUDE = 37.3898
 INITIAL_LONGITUDE = 126.6390
@@ -74,10 +37,7 @@ class GuiMainNode(Node):
 
         self.declare_parameter('http_port', 8000)
         self.use_fixed_gps = USE_FIXED_GPS
-        # 카메라 스트림은 GCS가 아니라 B1 보드 위 camera_streaming 패키지(http_video_server,
-        # 고정 포트 8000)가 직접 서빙한다. GCS는 B1의 IP를 알 방법이 없으므로 launch 인자로
-        # 받는다. 비워두면(기본값) create_app()이 config/gcs_params.yaml을 대신 읽는다 -
-        # 매번 launch 인자로 IP를 안 넘기고 싶으면 그 파일에 한 번만 적어두면 된다.
+        # launch 인자가 비어 있으면 config/gcs_params.yaml의 B1 주소를 사용한다.
         self.declare_parameter('camera_host', '')
 
         self.state_lock = threading.Lock()
@@ -89,13 +49,9 @@ class GuiMainNode(Node):
             'cmd_vel': None,
             'pump_on': None,
             'pump_state': None,
-            # joy_to_cmd_node가 항상 수동 모드로 시작하므로(joy_to_cmd_node.py 참고) 기본값을
-            # False로 맞춰둔다 - /actuator/auto_mode가 volatile QoS라 joy_to_cmd_node의 시작 시
-            # 발행을 GCS가 늦게 구독 시작하면 놓칠 수 있어, None으로 두면 실제로는 수동인데도
-            # 대시보드에 아무 표시등도 안 켜지는 문제가 있었다.
+            # joy_to_cmd_node의 기본 모드와 일치시킨다.
             'auto_mode': False,
-            # actuator_driver_node가 /actuator/led_state로 실제 적용된 색을 발행하기 전까지는
-            # 알 방법이 없으므로 None(불명)으로 둔다 - 대시보드 토글은 None이면 회색으로 표시.
+            # 실제 LED 상태를 받기 전에는 알 수 없다.
             'led_on': None,
         }
 
@@ -115,13 +71,8 @@ class GuiMainNode(Node):
         self.create_subscription(Bool, '/actuator/pump_state', self.on_pump_state, 10)
         self.create_subscription(Bool, '/actuator/auto_mode', self.on_auto_mode, 10)
         self.create_subscription(ColorRGBA, '/actuator/led_state', self.on_led_state, 10)
-        # 대시보드의 LED on/off 토글이 여기로 명령을 보낸다 (actuator_driver_node.py가 구독).
         self.led_cmd_pub = self.create_publisher(ColorRGBA, '/actuator/led_cmd', 10)
-        # 웹 화면의 gameState("START 눌렀는지")를 joy_to_cmd_node.py(별도 프로세스라 이 화면의
-        # JS 상태를 직접 볼 방법이 없다)에 중계한다 - 그쪽이 이 값으로 START 전엔 추진기/펌프/
-        # 자동모드 발행을 막는다. 기본값 False(비활성)와 대칭이 맞도록, 이 노드 자신도 시작 시
-        # 한 번 false로 발행해둔다 - auto_mode 초기 발행과 같은 이유(volatile QoS라 늦게 붙은
-        # 쪽이 놓칠 수 있음).
+        # 게임 상태는 펌프·자동 모드 제어용으로 중계한다.
         self.game_active_pub = self.create_publisher(Bool, '/gcs/game_active', 10)
         self.publish_game_active(False)
 
@@ -141,7 +92,7 @@ class GuiMainNode(Node):
     def on_water_quality(self, msg: String):
         try:
             data = json.loads(msg.data)
-        except (TypeError, ValueError): 
+        except (TypeError, ValueError):
             return
         with self.state_lock:
             self.state['water_quality'] = data
@@ -168,7 +119,10 @@ class GuiMainNode(Node):
 
     def on_cmd_vel(self, msg: Twist):
         with self.state_lock:
-            self.state['cmd_vel'] = {'linear_x': msg.linear.x, 'angular_z': -msg.angular.z}  # 웹은 조이스틱 방향 그대로 표시
+            self.state['cmd_vel'] = {
+                'linear_x': msg.linear.x,
+                'angular_z': -msg.angular.z,  # 웹 조이스틱 표시 방향
+            }
 
     def on_pump_cmd(self, msg: Bool):
         with self.state_lock:
@@ -192,12 +146,7 @@ class GuiMainNode(Node):
 
 
 def _config_paths() -> list:
-    """gcs_params.yaml을 찾을 후보 경로들 (install 우선, 없으면 소스 트리).
-
-    install 쪽을 먼저 보되, config/가 설치되기 전에 빌드된 install 디렉터리가 남아있으면
-    (실제로 그랬다) 소스 트리의 config/gcs_params.yaml을 그대로 읽는다. 안 그러면 값을
-    적어놨는데도 조용히 빈 문자열이 돼서 카메라가 GCS 자신을 가리키게 된다.
-    """
+    """설치 경로와 소스 트리의 일반 설정 파일 경로를 반환한다."""
     paths = []
     try:
         paths.append(
@@ -205,19 +154,13 @@ def _config_paths() -> list:
         )
     except Exception:
         pass
-    # .../src/usv_gcs/usv_gcs/gui_main_node.py -> .../src/usv_gcs/config/gcs_params.yaml
     src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     paths.append(os.path.join(src_dir, 'config', 'gcs_params.yaml'))
     return paths
 
 
 def _secrets_config_paths() -> list:
-    """gcs_secrets.yaml을 찾을 후보 경로들 (_config_paths()와 동일한 패턴).
-
-    gcs_params.yaml과 이름만 다른 별도 파일로 둔 이유: gcs_params.yaml은 git에 커밋되는
-    설정이고, gcs_secrets.yaml은 API 키 같은 값이라 .gitignore로 커밋을 막아뒀다. 한
-    파일에 같이 두면 특정 줄만 gitignore할 수 없어서 파일 자체를 분리했다.
-    """
+    """Git에서 제외한 API 키 설정 파일의 후보 경로를 반환한다."""
     paths = []
     try:
         paths.append(
@@ -231,12 +174,7 @@ def _secrets_config_paths() -> list:
 
 
 def _google_maps_api_key_from_config(node: GuiMainNode) -> str:
-    """config/gcs_secrets.yaml의 google_maps_api_key 값을 읽는다.
-
-    파일이 없거나(.example만 복사 안 한 경우) 키가 비어있으면 조용히 빈 문자열을
-    반환한다 - 미니맵은 빈 박스로 폴백하는 선택 기능이라 camera_host처럼 에러 로그를
-    띄울 정도는 아니다.
-    """
+    """비밀 설정 파일에서 Google Maps API 키를 읽는다."""
     for config_path in _secrets_config_paths():
         try:
             with open(config_path) as f:
@@ -251,11 +189,7 @@ def _google_maps_api_key_from_config(node: GuiMainNode) -> str:
 
 
 def _camera_host_from_config(node: GuiMainNode) -> str:
-    """config/gcs_params.yaml의 camera_host 값을 읽는다 (launch 인자를 안 넘겼을 때 폴백).
-
-    B1 IP가 자주 안 바뀌면 launch 인자로 매번 넘기는 대신 이 파일에 한 번만 적어두는 게
-    편하다. 어느 파일을 읽었는지 로그로 남긴다 - 조용히 실패하면 원인을 찾기 어렵다.
-    """
+    """launch 인자가 없을 때 일반 설정 파일에서 B1 주소를 읽는다."""
     for config_path in _config_paths():
         try:
             with open(config_path) as f:
@@ -270,12 +204,10 @@ def _camera_host_from_config(node: GuiMainNode) -> str:
 
 
 def create_app(node: GuiMainNode) -> Flask:
-    # 대시보드(INDEX_HTML)가 참조하는 배/물고기/쓰레기 이미지 에셋은 web/에 설치되어 있고,
-    # static_url_path=''라서 "lake.png" 같은 상대 경로 그대로 루트에서 서빙된다.
     web_dir = get_package_share_directory('usv_gcs') + '/web'
     app = Flask(__name__, static_folder=web_dir, static_url_path='')
 
-    # launch 인자가 우선, 안 넘겼으면(빈 문자열) gcs_params.yaml을 대신 읽는다.
+    # launch 인자가 설정 파일보다 우선한다.
     camera_host = str(node.get_parameter('camera_host').value or '').strip()
     if camera_host:
         node.get_logger().info(f'camera_host={camera_host} (launch 인자)')
@@ -305,9 +237,6 @@ def create_app(node: GuiMainNode) -> Flask:
         state['battery_warning_pct'] = BATTERY_WARNING_PCT
         return jsonify(state)
 
-    # 대시보드의 LED on/off 토글 버튼(마우스 클릭 또는 조이스틱 X 버튼)이 호출한다.
-    # 펌프/auto_mode와 달리 LED는 조이스틱이 아니라 웹 화면에서 직접 명령을 보내는
-    # 유일한 액추에이터라서 여기 쓰기 가능한 엔드포인트가 필요했다.
     @app.post('/api/led')
     def api_led():
         body = request.get_json(silent=True) or {}
@@ -315,11 +244,7 @@ def create_app(node: GuiMainNode) -> Flask:
         node.publish_led_cmd(on)
         return jsonify({'ok': True, 'on': on})
 
-    # 대시보드가 START를 누르거나(true) 게임이 끝날 때(false) 호출한다. joy_to_cmd_node.py가
-    # 이걸 구독해서 펌프/자동모드는 게임이 진행 중일 때만 실제로 발행한다 (배 이동은 게임
-    # 상태와 무관하게 항상 됨). 시작/종료 양쪽 다 LED는 꺼진 초기 상태로 되돌린다 - LED는
-    # 이 노드가 직접 발행하는 토픽이라 여기서 처리한다 (자동모드 초기화는 joy_to_cmd_node.py
-    # on_game_active()가 같은 시점에 맡는다).
+    # 게임 시작·종료 시 LED를 끄고 게임 상태를 전달한다.
     @app.post('/api/game_active')
     def api_game_active():
         body = request.get_json(silent=True) or {}

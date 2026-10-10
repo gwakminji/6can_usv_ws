@@ -1,12 +1,4 @@
-"""gui_main_node의 웹 대시보드 HTML/JS.
-
-Dongwon님이 만든 캔버스 게임 스타일 GUI(usv_gui 레포)를 이 프로젝트의 인터페이스 계약에 맞게
-이식한 버전이다. 원본은 roslibjs로 rosbridge_websocket에 직접 붙는 구조라서 데이터 가져오는 부분만
-전부 폴링 방식으로 바꿨다 (게임 로직 자체는 그대로).
-
-이미지 에셋(배/물고기/쓰레기 스프라이트 등)은 gui_main_node.py가 web/ 디렉터리를
-static_folder로 서빙해서 "lake.png" 같은 상대 경로가 그대로 동작한다.
-"""
+"""gui_main_node가 제공하는 웹 대시보드 HTML과 JavaScript."""
 
 INDEX_HTML = """<!doctype html>
 <html lang="ko">
@@ -19,26 +11,15 @@ INDEX_HTML = """<!doctype html>
       display: flex; justify-content: center; align-items: center; height: 100vh;
       font-family: '맑은 고딕', sans-serif; overflow: hidden;
   }
-  /* border/box-shadow는 canvas가 아니라 여기 둔다 - canvas에 border를 주면 그 두께만큼
-     캔버스의 실제 그림 영역(0,0)과 #gameContainer의 패딩 모서리가 어긋나서, 그 안에 absolute로
-     배치하는 #cameraPanel/#ledPanel/#actuatorPanel 같은 DOM 패널이 캔버스에 그린 사각형들과
-     몇 px씩 안 맞게 된다. */
+  /* 테두리는 패널 좌표가 어긋나지 않도록 컨테이너에 둔다. */
   #gameContainer {
       position: relative; display: inline-block; transform-origin: center center;
       border: 3px solid #e29578; box-shadow: 0 0 20px rgba(0,0,0,0.8);
   }
   canvas { display: block; background-color: #2c1a11; }
 
-  #gpsBanner {
-      position: absolute; top: 0; left: 0; right: 0; z-index: 20;
-      background: #522; color: #fdd; padding: 6px; text-align: center; font-size: 12px;
-      display: none;
-  }
-
   #cameraPanel {
-      /* 왼쪽 열(미니맵)과 가로폭을 맞추고, 그 아래 남는 공간을 캔버스
-         하단(600px)까지 꽉 채운다. 펌프제어 패널은 우측 사이드바로 옮겨서 이 열엔
-         미니맵만 남았다. */
+      /* 미니맵 아래 왼쪽 열 */
       position: absolute; top: 185px; left: 18px; width: 130px; height: 415px;
       background-color: #1c100a; border: 2px solid #38bdf8; box-sizing: border-box;
       padding: 3px; display: flex; flex-direction: column; gap: 6px;
@@ -56,9 +37,7 @@ INDEX_HTML = """<!doctype html>
   .cam-warn { font-size: 9px; color: #fdd; text-align: center; padding: 0 4px; }
 
   #ledPanel {
-      /* 우측 사이드바, 수질 센서 모니터링 패널 바로 아래 / 펌프제어 패널 바로 위에 들어간다.
-         펌프제어 패널과 가로폭(200px)을 맞추고, sidebarX를 따라가야 해서 left는
-         updateResponsiveCanvas()가 매 프레임 갱신한다. */
+      /* 우측 사이드바 위치는 updateResponsiveCanvas()가 갱신한다. */
       position: absolute; top: 248px; left: 585px; width: 200px; height: 32px;
       box-sizing: border-box; display: flex; align-items: center; gap: 6px;
       background-color: #150d08; border: 2px solid #e29578; padding: 0 8px; font-size: 11px;
@@ -76,9 +55,7 @@ INDEX_HTML = """<!doctype html>
   .led-toggle-label { font-size: 10px; color: #ccc; font-weight: bold; }
 
   #actuatorPanel {
-      /* ledPanel 바로 아래, 뽑기 칸 바로 위에 들어간다. 그 칸과 가로폭(200px)을
-         맞추고, sidebarX를 따라가야 해서 left는 updateResponsiveCanvas()가 매 프레임
-         갱신한다. */
+      /* LED 패널 아래의 제어 영역 */
       position: absolute; top: 288px; left: 585px; width: 200px; box-sizing: border-box;
       background-color: #150d08; border: 2px solid #e29578; padding: 6px; font-size: 11px;
       z-index: 10;
@@ -123,7 +100,6 @@ INDEX_HTML = """<!doctype html>
 </head>
 <body>
 <div id="gameContainer">
-    <div id="gpsBanner">⚠ GPS 신호 없음 (마지막 위치 유지 중)</div>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
     <div id="cameraPanel" class="panel-hidden">
@@ -159,27 +135,43 @@ INDEX_HTML = """<!doctype html>
     </div>
 </div>
 
-<!-- LED 이펙트(led_effect.json)를 그릴 숨김 호스트 - lottie-web의 canvas 렌더러가 이 div
-     안에 자기 <canvas>를 직접 만든다. 화면엔 안 보이지만(left:-9999px) 그 캔버스를 매 프레임
-     메인 게임 캔버스로 drawImage해서 보트 주변에 겹쳐 그린다. -->
+<!-- LED 이펙트를 메인 캔버스에 그리기 위한 숨김 호스트 -->
 <div id="ledEffectHost" style="position:absolute; left:-9999px; top:-9999px; width:300px; height:300px; pointer-events:none;"></div>
 
 <script src="lottie.min.js"></script>
 <script>
-// --- [카메라별 표시 여부] 보트에 카메라가 수면/수중 두 대라 각각 따로 켜고 끌 수 있게
-// 뺐다. false면 해당 박스를 아예 숨긴다 (스트림 연결도 안 함).
+// ===== 사용자 설정: 화면, 게임, 조이스틱 =====
 const SHOW_SURFACE_CAM = true;
 const SHOW_UNDERWATER_CAM = true;
-const ANY_CAM_SHOWN = SHOW_SURFACE_CAM || SHOW_UNDERWATER_CAM;
+const CAMERA_PORT = 8000;             // B1 카메라 스트림 포트
+const GPS_DEFAULT_LAT = 37.3898;     // GPS 수신 전 미니맵 중심
+const GPS_DEFAULT_LNG = 126.6390;
+const MINI_MAP_REFRESH_MS = 1000;
+const STATE_REFRESH_MS = 200;
+const CMD_VEL_EPS = 0.05;
+const BOAT_SPEED_PX = 2.0;
+const GAME_DURATION_SECONDS = 60;
+const TARGET_SCORE = 10000;
+const INITIAL_GOLD = 300;
+const INITIAL_FISH_COUNT = 4;
+const LARGE_TRASH_CHANCE = 0.25;
+const MONSTER_SPAWN_INTERVAL_SECONDS = 3;
+const MAX_MONSTERS = 25;
+const MIN_MAP_WIDTH = 1140;
+const MAP_HEIGHT = 1200;
+const GACHA_COST = 150;
+const GACHA_GAMEPAD_BUTTON_INDEX = 2; // Y: 컨트롤러별 확인 필요
+const LED_GAMEPAD_BUTTON_INDEX = 3;   // X
+const START_GAMEPAD_BUTTON_INDEX = 9; // Start
+const BACK_GAMEPAD_BUTTON_INDEX = 8;  // Back: 컨트롤러별 확인 필요
 
-// --- [카메라 스트림] B1 보드의 camera_streaming 패키지(http_video_server)가 MJPEG를
-// 직접 서빙한다 - GCS 자신이 아니라 B1 보드 위에서 도는 서버라 GCS의 location.hostname으로
-// 폴백하면 안 된다(폴백하면 GCS 자신의 8000번을 찍어서 조용히 검은 화면이 된다). 포트는
-// camera_streaming 쪽 고정값(8000). 호스트는 gui_main_node.py의 camera_host 파라미터
-// (gcs.launch.py camera_host 인자 또는 config/gcs_params.yaml)로 주입된다. 값이 비어있으면
-// 폴백 없이 화면에 설정 안내를 띄운다 - 잘못된 주소로 붙는 것보다 낫다.
-const CAMERA_PORT = 8000;
+// 서버에서 주입: camera_host는 gcs_params.yaml/launch 인자,
+// Google Maps 키는 git에 올리지 않는 gcs_secrets.yaml에서 설정한다.
 const cameraHost = "__CAMERA_HOST__";
+const googleApiKey = "__GOOGLE_MAPS_API_KEY__";
+
+// ===== 카메라 =====
+const ANY_CAM_SHOWN = SHOW_SURFACE_CAM || SHOW_UNDERWATER_CAM;
 
 function setupCamBox(enabled, boxId, imgId, topic) {
     const box = document.getElementById(boxId);
@@ -199,45 +191,12 @@ function setupCamBox(enabled, boxId, imgId, topic) {
 setupCamBox(SHOW_SURFACE_CAM, 'surfaceCamBox', 'surfaceCam', '/camera/surface/image_raw');
 setupCamBox(SHOW_UNDERWATER_CAM, 'underwaterCamBox', 'underwaterCam', '/camera/underwater/image_raw');
 
-// --- [펌프] 조종은 조이스틱 하나로만 하므로 펌프도 joy_to_cmd_node가 조이스틱 버튼으로
-// 직접 /actuator/pump_cmd를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
-
-// --- [자동 제어] 펌프와 마찬가지로 joy_to_cmd_node가 조이스틱 버튼으로 직접
-// /actuator/auto_mode를 발행한다. 이 화면은 그 상태를 표시만 한다(버튼 없음). ---
-
-// --- [GPS] 위경도를 캔버스 픽셀 좌표로 변환 ---
-// 📍 송도 센트럴파크 기준 위경도 범위 설정 - GPS 수신 전 기본 위치(및 미니맵)가
-// 실제로 존재하는 장소를 가리키도록 여기 좌표로 잡았다.
-const gpsBounds = {
-    minLat: 37.3888,
-    maxLat: 37.3908,
-    minLng: 126.6380,
-    maxLng: 126.6400
-};
-
-function convertGpsToPixel(lat, lng, origin) {
-    // 매 게임의 시작 GPS 위치를 지도 중앙에 맞추고 이후 이동량만 반영한다.
-    let x = mapWidth / 2 + ((lng - origin.longitude) / (gpsBounds.maxLng - gpsBounds.minLng)) * mapWidth;
-    let y = mapHeight / 2 - ((lat - origin.latitude) / (gpsBounds.maxLat - gpsBounds.minLat)) * mapHeight;
-
-    return {
-        x: Math.max(30, Math.min(mapWidth - 30, x)),
-        y: Math.max(30, Math.min(mapHeight - 30, y))
-    };
-}
-
-let isGpsReceived = false;
-let latestGpsFix = null;
-let gameGpsOrigin = null;
-
-// --- [미니맵] 구글 정적맵 위성 사진 위에 실제 GPS 좌표를 표시 ---
-// TODO: 구글 맵 Static API 키 채워넣기. 저장소가 public이라 여기 직접 커밋하지 말 것
-// (팀 키 사용 여부/도메인 제한 확인 후 배포 환경에서만 주입 권장).
-const googleApiKey = "";
+// ===== GPS 미니맵: 게임 보트 위치와 별개 =====
 const miniMapImg = new Image();
-let currentLat = (gpsBounds.minLat + gpsBounds.maxLat) / 2;
-let currentLng = (gpsBounds.minLng + gpsBounds.maxLng) / 2;
-let lastMiniMapUpdateMs = 0; // refreshState()가 더 자주 돌아도 미니맵 이미지 요청은 1초 간격으로 묶기 위한 타임스탬프
+let currentLat = GPS_DEFAULT_LAT;
+let currentLng = GPS_DEFAULT_LNG;
+let miniMapHasGpsFix = false;
+let lastMiniMapUpdateMs = 0;
 
 function updateMiniMapUrl(lat, lng) {
     currentLat = lat ?? currentLat;
@@ -251,51 +210,39 @@ function updateMiniMapUrl(lat, lng) {
 
 updateMiniMapUrl(currentLat, currentLng);
 
-// 조종은 조이스틱(joy_to_cmd_node)이 하고, 이 화면은 그 결과를 보여주기만 한다.
+// ===== 서버 상태 =====
 let lastCmdVel = { linearX: 0, angularZ: 0 };
+function hasBoatMotionCommand() {
+    return Math.abs(lastCmdVel.linearX) > CMD_VEL_EPS || Math.abs(lastCmdVel.angularZ) > CMD_VEL_EPS;
+}
 
-// /water_quality/data의 실제 JSON 스키마 (water_quality_node.py 기준) 그대로 보관
 let sensorWQ = {
     temp_c: null, ph: null, do_mg_l: null,
     turbidity_voltage_v: null, clarity_pct: null, clarity_level: null
 };
 
-// /battery/status의 실제 JSON 스키마: thruster1/thruster2/pump_ctrl/sensor_board 각각 {current_a, percentage}
 let batteryStatus = null;
 let batteryWarningPct = 20;
 
-// --- [상태 폴링] gui_main_node.py의 /api/state를 1초 간격으로 읽어온다 ---
 async function refreshState() {
     try {
         const res = await fetch('/api/state');
         const s = await res.json();
 
-        const banner = document.getElementById('gpsBanner');
-        banner.style.display = (s.gps_has_fix === false) ? 'block' : 'none';
-
-        if (s.gps_fix) {
-            latestGpsFix = s.gps_fix;
-            if (gameState === "game") {
-                // 시작 시 GPS가 없었다면 이 게임의 첫 수신 위치를 기준점으로 사용한다.
-                if (!gameGpsOrigin) gameGpsOrigin = { ...latestGpsFix };
-                let pos = convertGpsToPixel(s.gps_fix.latitude, s.gps_fix.longitude, gameGpsOrigin);
-                targetX = pos.x;
-                targetY = pos.y;
-                isGpsReceived = true;
-            }
-            // refreshState 자체는 조종 체감 때문에 200ms마다 돌지만, 미니맵(구글 정적맵) 이미지는
-            // 그 주기 그대로 새로 요청하면 초당 5번씩 API를 때리게 되므로 따로 1초 간격으로
-            // 묶는다 - 보트 위치/방향 반응성과는 무관한 별개의 쓰로틀.
-            const nowMs = Date.now();
-            if (nowMs - lastMiniMapUpdateMs >= 1000) {
-                lastMiniMapUpdateMs = nowMs;
-                updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
-            }
-        }
-
         if (s.cmd_vel) {
             lastCmdVel.linearX = s.cmd_vel.linear_x;
             lastCmdVel.angularZ = s.cmd_vel.angular_z;
+        }
+
+        // gps_fix는 신호가 끊겨도 서버에 마지막 값이 남으므로 현재 Fix만 미니맵에 반영한다.
+        miniMapHasGpsFix = Boolean(s.gps_has_fix === true && s.gps_fix &&
+            Number.isFinite(s.gps_fix.latitude) && Number.isFinite(s.gps_fix.longitude));
+        if (miniMapHasGpsFix) {
+            const nowMs = Date.now();
+            if (nowMs - lastMiniMapUpdateMs >= MINI_MAP_REFRESH_MS) {
+                lastMiniMapUpdateMs = nowMs;
+                updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
+            }
         }
 
         if (s.pump_on !== null && s.pump_on !== undefined) {
@@ -303,10 +250,6 @@ async function refreshState() {
         }
 
         if (s.auto_mode !== null && s.auto_mode !== undefined) {
-            // 펌프는 기본적으로 수질에 따라 자동 작동하고, B 버튼으로 자동/수동을 토글,
-            // A 버튼으로 수동 모드일 때 직접 구동한다(actuator_driver_node.py). 배 조종
-            // 스틱(cmd_vel)은 펌프 모드와 무관하니 여기서 보지 않는다 - /actuator/auto_mode
-            // 값만 그대로 반영한다.
             document.getElementById('pumpModeAutoBox').classList.toggle('on', s.auto_mode === true);
             document.getElementById('pumpModeManualBox').classList.toggle('on', s.auto_mode === false);
         }
@@ -326,17 +269,10 @@ async function refreshState() {
         console.error(e);
     }
 }
-// 조이스틱 조작 결과(cmd_vel 방향, GPS 위치)가 화면에 반영되는 간격이기도 해서, 조종 체감
-// 딜레이를 줄이려고 1000ms -> 200ms로 올렸다. 실제 추진기로 나가는 /cmd_vel 자체의 램프
-// (joy_to_cmd_node의 linear_ramp_rate/angular_ramp_rate)는 안전 목적이라 그대로 둔다 -
-// 이건 어디까지나 이미 발행된 상태를 화면이 얼마나 자주 따라가서 보여주느냐의 문제다.
-setInterval(refreshState, 200);
+setInterval(refreshState, STATE_REFRESH_MS);
 refreshState();
-// -----------------------
 
-// --- [LED 이펙트] led_effect.json(Lottie 애니메이션)을 #ledEffectHost 안에 canvas 렌더러로
-// 띄워두고, 보트 주변엔 그 내부 canvas를 매 프레임 drawImage해서 겹쳐 그린다(아래 mainLoop
-// "7. LED 이펙트" 참고). 재생/정지는 updateLedUi()가 ledOn 값이 바뀔 때만 토글한다. ---
+// ===== LED 이펙트와 조작 =====
 const ledEffectAnim = lottie.loadAnimation({
     container: document.getElementById('ledEffectHost'),
     renderer: 'canvas',
@@ -350,9 +286,7 @@ ledEffectAnim.addEventListener('DOMLoaded', () => {
 });
 let ledEffectPlaying = false;
 
-// --- [LED 토글] 우측 사이드바 #ledPanel 클릭 또는 조이스틱 X 버튼으로 실행. 펌프/auto_mode와
-// 달리 조이스틱이 아니라 이 화면이 직접 /api/led로 명령을 보내는 유일한 액추에이터라서
-// gui_main_node.py에 쓰기용 엔드포인트를 따로 뒀다. ---
+// LED는 이 화면에서 /api/led로 명령을 보낸다.
 function updateLedUi() {
     document.getElementById('ledToggleLight').classList.toggle('on', ledOn === true);
     document.getElementById('ledToggleLabel').textContent = ledOn === null ? '--' : (ledOn ? 'ON' : 'OFF');
@@ -368,7 +302,7 @@ function updateLedUi() {
 
 function toggleLed() {
     const next = !ledOn;
-    ledOn = next; // 서버 응답(최대 1초) 기다리지 않고 먼저 반영 - refreshState()가 실제 값으로 보정
+    ledOn = next; // 화면을 먼저 갱신하고 다음 상태 폴링에서 보정
     updateLedUi();
     fetch('/api/led', {
         method: 'POST',
@@ -377,14 +311,9 @@ function toggleLed() {
     }).catch((e) => console.error('LED 명령 전송 실패', e));
 }
 
-// --- [게임 활성 상태] 실제 배 하드웨어(추진기/펌프/자동모드)는 이 웹페이지가 아니라
-// joy_to_cmd_node.py가 조이스틱을 직접 읽어서 제어한다. "START를 누르기 전엔 하드웨어가
-// 안 움직여야 한다"는 이 화면의 gameState를 그 별도 ROS 프로세스는 알 방법이 없으므로,
-// /api/game_active로 알려주면 gui_main_node.py가 /gcs/game_active 토픽으로 중계한다.
-// 조이스틱 입력 자체(축/버튼 읽기)는 joy_to_cmd_node가 이 값과 무관하게 항상 계속하고,
-// 이 값이 false인 동안만 실제 발행(cmd_vel/pump_cmd/auto_mode)을 멈춘다. ---
+// 게임 상태는 펌프·자동 모드에만 적용된다. 실제 배 이동은 게임 상태와 무관하다.
 function setGameActive(active) {
-    ledOn = false; // 서버(gui_main_node.py)도 이 호출에서 LED를 강제로 끄니 화면도 미리 맞춰둔다
+    ledOn = false;
     updateLedUi();
     fetch('/api/game_active', {
         method: 'POST',
@@ -396,7 +325,7 @@ function setGameActive(active) {
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// 📂 이미지 자원 관리 객체 (오로라 green, yellow, red 추가)
+// ===== 이미지 자원 =====
 const assets = {
     lake: new Image(),
     ending: new Image(),
@@ -419,7 +348,7 @@ const assets = {
     timeBanner: new Image()
 };
 
-// 이미지 파일명 매칭 설정
+// 이미지 파일명 매칭
 assets.lake.src = "lake.png";
 assets.ending.src = "ending.png";
 assets.mainstart.src = "mainstart.png";
@@ -440,16 +369,13 @@ assets.logoInu.src = "logo_inu.png";
 assets.logoYouth.src = "logo_youth.png";
 assets.timeBanner.src = "time.png";
 
-// 시작/엔딩 화면 우측 하단에 로고 3개를 원본 비율 유지한 채 가로로 나열해서 그린다.
+// 시작·종료 화면 로고
 function drawCornerLogos(bottomY, rightMargin = 15) {
-    // 로고마다 원본 가로세로 비율이 달라서 카드 크기가 제각각이면 어중간해 보이므로,
-    // 흰 배경판의 폭(commonW)을 통일한다 - 세 로고 다 이 폭에 맞춰 자기 비율대로
-    // 높이만 알아서 정해진다. 카드 사이 간격(gap)도 최대한 좁힌다.
+    // 배경판 폭은 통일하고 로고의 원본 비율은 유지한다.
     const commonW = 150;
     const pad = 6;
     const gap = 2;
-    // 인천대(logoInu)는 원본 비율상 세로가 유독 길어져서 카드 폭은 통일하되
-    // 로고 자체는 scale만큼 작게 그려서(카드 안에서 가운데 정렬) 세로 크기를 줄인다.
+    // 세로가 긴 인천대 로고는 카드 안에서 축소한다.
     const items = [
         { img: assets.logoFacillity, scale: 1 },
         { img: assets.logoInu, scale: 0.75 },
@@ -479,7 +405,7 @@ function drawCornerLogos(bottomY, rightMargin = 15) {
     });
 }
 
-// 🎵 오디오 관리
+// ===== 오디오 =====
 const bgm = {
     main: new Audio("bgm_main.mp3"),
     game: new Audio("bgm_game.mp3"),
@@ -511,40 +437,34 @@ function playSfx(key) {
     sfx[key].play().catch(() => {});
 }
 
-// 게임 상태 관리 ("main" 또는 "game" 또는 "ending")
+// ===== 게임 상태 =====
 let gameState = "main";
 
-// 게임 변수들
-let initialTime = 60;  // 게임 시간 90초 -> 60초 변경
+let initialTime = GAME_DURATION_SECONDS;
 let timeLeft = initialTime;
-let targetScore = 10000;
+let targetScore = TARGET_SCORE;
 let isGameOver = false;
 let cheatClickCount = 0;
 let waterQuality = 70.0;
 let maxWaterQuality = 100.0;
-let gold = 300;
+let gold = INITIAL_GOLD;
 let score = 0;
-let fishCount = 4;
+let fishCount = INITIAL_FISH_COUNT;
 let ownedSpecialFishes = { witch: 0, ghost: 0, santa: 0, pumpkin: 0 };
 let ghostGoldTimer = 0;
 
-// 초광폭 화면에서 호수 뷰포트가 원래 맵 폭(1140)보다 넓어지면 배경 이미지가 다 못 채워서
-// 빈 공간이 생기므로, updateResponsiveCanvas()가 뷰포트 폭에 맞춰 이 값을 같이 늘려준다.
-// 최소값 1140은 기존 디자인 크기 - 좁은 화면에서는 그 아래로 줄어들지 않는다.
-let mapWidth = 1140;
-const mapHeight = 1200;
+// 넓은 화면에서는 updateResponsiveCanvas()가 맵 너비를 늘린다.
+let mapWidth = MIN_MAP_WIDTH;
+const mapHeight = MAP_HEIGHT;
 
-// 디폴트 위치 설정 (GPS 수신 전에는 중앙에 위치)
+// 게임 보트는 맵 중앙에서 시작하며 GPS와 연동하지 않는다.
 let targetX = mapWidth / 2;
 let targetY = mapHeight / 2;
 
 let boatAngle = 0.0;
-let boatSpriteIndex = 0; // 스프라이트 프레임 번호 직접 지정
-let isPumping = false; // 조이스틱 버튼 -> /actuator/pump_cmd -> refreshState() 폴링으로 갱신됨
-// LED는 조이스틱이 아니라 이 화면(토글 클릭 또는 X 버튼)에서 명령을 보내는 유일한
-// 액추에이터라서 낙관적 갱신이 필요하다: POST 직후 서버 응답을 기다리지 않고 바로
-// 반전시켜 화면에 표시하고, 다음 refreshState() 폴링(최대 1초 뒤)이 실제 상태로 덮어쓴다.
-// null이면 아직 실제 상태를 한 번도 못 받은 것 - 토글을 회색으로 표시한다.
+let boatSpriteIndex = 0;
+let isPumping = false;
+// LED 명령 직후 화면을 먼저 갱신하고, 다음 서버 폴링에서 실제 상태로 맞춘다.
 let ledOn = null;
 
 let fishes = [];
@@ -556,15 +476,13 @@ let cardHideTimer = null;
 let notificationText = "";
 let notificationTimer = null;
 
-// 뽑기 등급표: chance는 100 기준 당첨 확률(%) - 점수(score_val)가 높은 물고기일수록
-// 낮게 잡아서 좋은 물고기일수록 잘 안 나오게 한다. 4개 합은 100이어야 함.
+// 뽑기 확률(chance)의 합은 100이어야 한다.
 const specialFishTemplates = {
     witch: { name: "WITCH FISH", kor_name: "마녀 피쉬", rarity: "레어", chance: 55, score_val: 15, desc: "쓰레기 패널티 30% 완화 🎩" },
     ghost: { name: "GHOST LOBSTER", kor_name: "유령 가재", rarity: "에픽", chance: 28, score_val: 25, desc: "10초마다 +15G 생산 👻" },
     santa: { name: "SANTA GOLDFISH", kor_name: "산타 금붕어", rarity: "유니크", chance: 13, score_val: 35, desc: "적정 수질 시 점수 1.4배 🎅" },
     pumpkin: { name: "PUMPKIN FISH", kor_name: "호박 왕관피쉬", rarity: "레전더리", chance: 4, score_val: 50, desc: "초당 기본 점수 든든하게 +50점 👑" }
 };
-const GACHA_COST = 150;
 
 function formatElapsedTime(sec) {
     const m = Math.floor(sec / 60);
@@ -691,15 +609,13 @@ function startGame() {
     playBgm("game");
     timeLeft = initialTime;
     score = 0;
-    gold = 300;
+    gold = INITIAL_GOLD;
     waterQuality = 70.0;
     isGameOver = false;
-    fishCount = 4;
+    fishCount = INITIAL_FISH_COUNT;
     ownedSpecialFishes = { witch: 0, ghost: 0, santa: 0, pumpkin: 0 };
     targetX = mapWidth / 2;
     targetY = mapHeight / 2;
-    gameGpsOrigin = latestGpsFix ? { ...latestGpsFix } : null;
-    isGpsReceived = gameGpsOrigin !== null;
     fishes = [];
     monsters = [];
     for (let i = 0; i < fishCount; i++) spawnRandomNormalFish();
@@ -729,7 +645,7 @@ function spawnSpecialFish(fishKey) {
 }
 
 function spawnMonster() {
-    let isLarge = Math.random() < 0.25; // 큰 쓰레기 25% 확률로 등장
+    let isLarge = Math.random() < LARGE_TRASH_CHANCE;
     let chosenImg;
     if (isLarge) {
         let largeImgs = [assets.garbage1, assets.garbage2];
@@ -873,9 +789,9 @@ setInterval(() => {
     waterQuality = Math.max(0.0, Math.min(maxWaterQuality, waterQuality));
 
     monsterSpawnTimer++;
-    if (monsterSpawnTimer >= 3) {   // 몬스터 스폰 주기 6초 -> 3초로 변경
+    if (monsterSpawnTimer >= MONSTER_SPAWN_INTERVAL_SECONDS) {
         monsterSpawnTimer = 0;
-        if (monsters.length < 25) spawnMonster();  // 게임 내 쓰레기 최대 수 15 -> 25
+        if (monsters.length < MAX_MONSTERS) spawnMonster();
     }
 
     let ghostCount = ownedSpecialFishes.ghost;
@@ -904,13 +820,9 @@ function batterySummaryText() {
     return parts.length ? `🔋 ${parts.join(' ')}` : "🔋 배터리: 데이터 없음";
 }
 
-// --- [화면 맞춤] 메인/엔딩 화면은 800x600 고정 그림이라 그대로 두고, 실제 조종 화면(game)만
-// 스크롤되는 넓은 맵을 더 보여주도록 캔버스 내부 가로 해상도를 창 크기에 맞춰 늘린다.
-// 세로(600) 기준 좌표 로직은 그대로 두고, #gameContainer를 그 비율로 확대해서 창을 꽉 채운다
-// (모니터 해상도와 무관하게, 매 프레임 창 크기를 확인해서 동작).
+// 게임 중에만 캔버스 너비를 늘리고, 시작·종료 화면은 800×600을 유지한다.
 function updateResponsiveCanvas() {
-    // 카메라/LED/펌프제어 패널은 조종 화면(game)에서만 보여준다 - 메인/엔딩 화면에서는 숨김.
-    // (카메라 두 박스 각각의 on/off는 SHOW_SURFACE_CAM/SHOW_UNDERWATER_CAM이 따로 처리.)
+    // 카메라와 제어 패널은 게임 중에만 표시한다.
     const inGame = (gameState === "game");
     document.getElementById('cameraPanel').classList.toggle('panel-hidden', !inGame || !ANY_CAM_SHOWN);
     document.getElementById('ledPanel').classList.toggle('panel-hidden', !inGame);
@@ -927,27 +839,17 @@ function updateResponsiveCanvas() {
     const scale = Math.min(window.innerWidth / (canvas.width + 6), window.innerHeight / (canvas.height + 6));
     document.getElementById('gameContainer').style.transform = `scale(${scale})`;
 
-    // 사이드바(HUD)는 항상 캔버스 우측 230px 폭 고정 - 캔버스가 넓어지면 그만큼 오른쪽으로 밀림.
-    // #cameraPanel은 왼쪽 열(미니맵 아래)에 고정이라 따로 옮길 필요 없지만, #ledPanel/
-    // #actuatorPanel은 사이드바 안(수질 센서 패널과 뽑기/퀘스트 패널 사이)에 들어있어서 sidebarX를
-    // 따라가야 한다.
+    // 오른쪽 패널은 고정 폭 사이드바를 따라 이동한다.
     const sidebarX = canvas.width - 230;
     document.getElementById('ledPanel').style.left = (sidebarX + 15) + 'px';
     document.getElementById('actuatorPanel').style.left = (sidebarX + 15) + 'px';
 
-    // 호수(월드) 폭도 뷰포트(sidebarX)만큼 늘려서 배경 이미지가 빈틈없이 다 채우도록 한다.
-    mapWidth = Math.max(1140, sidebarX);
+    // 넓은 화면에서도 호수 배경이 비지 않도록 맵 너비를 맞춘다.
+    mapWidth = Math.max(MIN_MAP_WIDTH, sidebarX);
 }
 
-// --- [조이스틱 뽑기 버튼] 하드웨어 조이스틱 버튼이 물고기 4종을 개별로 고르기엔
-// 부족해서, 뽑기 자체를 버튼 하나(Y)에 배정한다. ROS의 /joy 토픽과는 별개로 브라우저가
-// 직접 인식하는 HTML5 Gamepad API(navigator.getGamepads)를 사용한다 - 이벤트가 아니라
-// 매 프레임 폴링해야 버튼 상태를 읽을 수 있는 API라서 mainLoop 안에서 호출한다. ---
-// X 버튼(인덱스 3)은 LED on/off로 옮겨져서, 뽑기는 Y 버튼으로 이동했다. 아래 인덱스는
-// 아직 실측 확인 전 추정치다 - 안 맞으면 브라우저 콘솔에서
-// navigator.getGamepads()[0].buttons를 찍어보고 Y를 누른 순간 pressed:true로 바뀌는
-// 인덱스를 찾아 이 숫자만 바꾸면 된다.
-const GACHA_GAMEPAD_BUTTON_INDEX = 2; // Y 버튼 (추정치 - 실측 필요)
+// ===== 브라우저 Gamepad API 버튼 입력 =====
+// 버튼 번호는 상단 사용자 설정에서 변경한다.
 let prevGachaButtonPressed = false;
 
 function pollGamepadForGacha() {
@@ -957,20 +859,17 @@ function pollGamepadForGacha() {
     }
 
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    const pad = pads[0]; // 첫 번째로 연결된 조이스틱만 사용
+    const pad = pads[0];
     const button = pad && pad.buttons[GACHA_GAMEPAD_BUTTON_INDEX];
     const pressed = !!(button && button.pressed);
 
     if (pressed && !prevGachaButtonPressed) {
-        rollGachaFish(); // 버튼을 누르는 순간(edge)에만 1회 실행 - 누르고 있어도 연속 실행 안 됨
+        rollGachaFish();
     }
     prevGachaButtonPressed = pressed;
 }
 
-// --- [조이스틱 LED 버튼] 우측 사이드바 #ledPanel을 마우스로 누르는 대신 조이스틱 X 버튼으로도
-// 켜고 끌 수 있게 한다. 원래 뽑기가 쓰던 자리(인덱스 3)를 그대로 재사용 - 이 값은
-// 실측 확인이 이미 끝난 값이다. ---
-const LED_GAMEPAD_BUTTON_INDEX = 3; // X 버튼 (실측 확인 완료)
+// LED 토글
 let prevLedButtonPressed = false;
 
 function pollGamepadForLed() {
@@ -990,10 +889,7 @@ function pollGamepadForLed() {
     prevLedButtonPressed = pressed;
 }
 
-// --- [조이스틱 게임 시작 버튼] 메인 화면에서 마우스로 START 안내 문구를 누르는 대신
-// 조이스틱의 Start 버튼으로 시작할 수 있게 한다. 버튼 인덱스 9번 = 실제 조이스틱으로
-// 실측 확인 완료 (Start 버튼). ---
-const START_GAMEPAD_BUTTON_INDEX = 9; // 실측 확인 완료
+// 게임 시작
 let prevStartButtonPressed = false;
 
 function pollGamepadForStart() {
@@ -1013,11 +909,7 @@ function pollGamepadForStart() {
     prevStartButtonPressed = pressed;
 }
 
-// --- [조이스틱 back 버튼] 엔딩 화면에서 마우스로 "메인 화면으로 돌아가기"를 누르는
-// 대신 조이스틱의 Back 버튼으로 돌아갈 수 있게 한다. 버튼 인덱스 8 = 표준 Gamepad API
-// 매핑상 Back/Select 버튼 추정치 - 실제 조이스틱으로 검증 필요(안 맞으면 콘솔에서
-// navigator.getGamepads()[0].buttons를 눌러보며 pressed 인덱스 확인). ---
-const BACK_GAMEPAD_BUTTON_INDEX = 8;
+// 메인 화면으로 돌아가기
 let prevBackButtonPressed = false;
 
 function pollGamepadForBack() {
@@ -1084,11 +976,9 @@ function mainLoop() {
     } else if (gameState === "game") {
         animTimer += 0.2;
 
-        // /cmd_vel(조이스틱 → joy_to_cmd_node의 실제 명령, /api/state로 폴링)의 부호를
-        // 화면 방향(dx,dy)으로 역변환해서 보트가 바라보는 방향/스프라이트에만 반영한다.
-        // 위치 자체는 /gps/fix가 갱신(refreshState).
-        const CMD_VEL_EPS = 0.05;
-        const isMoving = Math.abs(lastCmdVel.linearX) > CMD_VEL_EPS || Math.abs(lastCmdVel.angularZ) > CMD_VEL_EPS;
+        // /cmd_vel(조이스틱 → joy_to_cmd_node의 실제 명령)을 화면 방향(dx,dy)으로
+        // 역변환한다. 게임 보트 위치와 방향은 이 명령만 사용하며 GPS와 연동하지 않는다.
+        const isMoving = hasBoatMotionCommand();
 
         if (isMoving) {
             if (activeCardShown) hideFishCardPopup();
@@ -1117,14 +1007,9 @@ function mainLoop() {
                 boatSpriteIndex = 14; // 좌상
             }
 
-            // GPS 미수신 시 dead-reckoning 폴백: 조이스틱 입력 방향으로 화면상 위치를 직접 이동
-            // (GPS가 들어오는 순간 refreshState()가 targetX/Y를 덮어써서 자연히 GPS 기준으로 전환됨)
-            if (!isGpsReceived) {
-                let speed = 2.0; // 조이스틱 입력에 따른 화면상 보트 이동 속도 (기존 6.0 -> 3.5 -> 2.0으로 낮춤)
-                let len = Math.hypot(dx, dy);
-                targetX = Math.max(30, Math.min(targetX + (dx / len) * speed, mapWidth - 30));
-                targetY = Math.max(30, Math.min(targetY + (dy / len) * speed, mapHeight - 30));
-            }
+            let len = Math.hypot(dx, dy);
+            targetX = Math.max(30, Math.min(targetX + (dx / len) * BOAT_SPEED_PX, mapWidth - 30));
+            targetY = Math.max(30, Math.min(targetY + (dy / len) * BOAT_SPEED_PX, mapHeight - 30));
         }
 
         // 사이드바(HUD)는 캔버스 우측 230px 고정, 나머지가 호수(플레이 뷰포트) 폭.
@@ -1227,16 +1112,12 @@ function mainLoop() {
             ctx.restore();
         }
 
-        // 5. 보트 스프라이트 출력 및 오로라 배경 투명화 적용 (1번 코드와 동일)
+        // 5. 보트와 수질 오로라
         let screenBoatX = targetX - cameraX;
         let screenBoatY = targetY - cameraY;
 
-        // 실제 수질 센서(clarity_pct, /water_quality/data)를 따른다 - 게임 내부 시뮬레이션
-        // 변수인 waterQuality(점수/연출용)와는 별개다. 기준은 usv_actuators의 water_policy.py와
-        // 동일: 60 이상 좋음/초록, 40 미만 나쁨/빨강, 그 사이 보통/노랑.
+        // 오로라 색상은 실제 clarity_pct를 따르며 게임 점수용 수질과 별개다.
         let currentAuraImg = assets.green;
-        // 초록은 지금 투명도(0.55)가 적당하다는 피드백이라 그대로 두고, 빨강/노랑(수질 나쁨/보통)만
-        // 더 선명하게 보이도록 투명도를 따로 올린다 - 색상별로 다른 값을 쓰기 위한 변수.
         let auraAlpha = 0.55;
         if (sensorWQ.clarity_pct !== null && sensorWQ.clarity_pct !== undefined) {
             if (sensorWQ.clarity_pct < 40) {
@@ -1414,11 +1295,9 @@ function mainLoop() {
         ctx.strokeRect(questPanelX + 10, gachaPanelY + 18, 180, 26);
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 11px '맑은 고딕'";
-        // 어떤 버튼을 눌러야 뽑기가 나가는지(조이스틱 Y) 바로 보이도록 버튼 문구에 적는다.
         ctx.fillText(`✨ 뽑기 (${GACHA_COST}G) (Y) ✨`, questPanelX + 100, gachaPanelY + 35);
 
-        // 퀘스트 안내 (뽑기 칸 바로 밑, 사이드바 맨 아래까지 채운다). 물고기 능력 설명은
-        // 굳이 필요 없다는 피드백으로 뺐다.
+        // 퀘스트 안내
         const questPanelY = gachaPanelY + gachaPanelH + 5;
         const questPanelH = 600 - questPanelY;
         ctx.fillStyle = "#150d08";
@@ -1450,15 +1329,11 @@ function mainLoop() {
 
         ctx.textAlign = "center";
 
-        // 상단 중앙 남은시간 배너 (time.png, 알파 있는 PNG로 교체됨) - 기존 사이드바
-        // 타이머(⏱️ mm:ss)는 그대로 둔 채 추가로 띄우는 것. 원본 이미지(500x499)는 투명
-        // 배경에 플레이트만 있고, 그 플레이트 부분(x:25~485, y:168~315)만 잘라서 쓴다 -
-        // 아래 TIME_BANNER_SRC_*가 그 잘라낸 영역. 시간 숫자는 이미지 속 주황색 디지털
-        // 표시창 자리(플레이트 기준 가로 66%, 세로 53% 지점)에 맞춰 겹쳐 그린다.
+        // 상단 타이머: 원본 이미지의 플레이트 부분만 잘라 사용한다.
         if (assets.timeBanner.complete && assets.timeBanner.naturalWidth !== 0) {
             const TIME_BANNER_SRC_X = 25, TIME_BANNER_SRC_Y = 168;
             const TIME_BANNER_SRC_W = 460, TIME_BANNER_SRC_H = 147;
-            const timeBannerW = 220; // 너무 크다는 피드백으로 320 -> 220으로 축소
+            const timeBannerW = 220;
             const timeBannerH = Math.round(timeBannerW * TIME_BANNER_SRC_H / TIME_BANNER_SRC_W);
             const timeBannerX = lakeWidth / 2 - timeBannerW / 2;
             const timeBannerY = 8;
@@ -1495,28 +1370,20 @@ function mainLoop() {
             ctx.fillRect(15, 15, 130, 137);
         }
 
-        monsters.forEach(m => {
-            let mxMini = 15 + (m.x / mapWidth) * 130;
-            let myMini = 15 + (m.y / mapHeight) * 137;
-            ctx.fillStyle = "#ff4757";
+        // 정적맵은 현재 GPS 좌표를 중심에 놓는다. 게임 보트 좌표는 이 지도에 그리지 않는다.
+        if (miniMapHasGpsFix) {
+            ctx.fillStyle = "#38bdf8";
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.arc(mxMini, myMini, 2, 0, Math.PI * 2);
+            ctx.arc(80, 83.5, 4, 0, Math.PI * 2);
             ctx.fill();
-        });
+            ctx.stroke();
+        }
 
-        let bxMini = 15 + (targetX / mapWidth) * 130;
-        let byMini = 15 + (targetY / mapHeight) * 137;
-        ctx.fillStyle = "#38bdf8";
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(bxMini, byMini, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = "#55ff55";
-        ctx.font = "bold 9px 'Courier New'";
-        ctx.fillText(`X: ${Math.floor(targetX)}, Y: ${Math.floor(targetY)}`, 80, 162);
+        ctx.fillStyle = miniMapHasGpsFix ? "#55ff55" : "#ffcf7a";
+        ctx.font = "bold 9px '맑은 고딕'";
+        ctx.fillText(miniMapHasGpsFix ? "GPS 위치" : "GPS 신호 없음", 80, 164);
 
         // 9. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
         const lakeCenterX = lakeWidth / 2;

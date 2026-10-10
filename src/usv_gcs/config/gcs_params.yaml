@@ -1,11 +1,5 @@
-# GCS 담당자용 파라미터 파일. 매번 `ros2 launch ... camera_host:=...`처럼 인자를 안 붙이고
-# 싶으면 여기 값만 고치면 된다 (다시 실행하면 바로 반영). launch 인자로 camera_host를
-# 따로 넘기면 그쪽이 이 파일보다 우선한다.
-#
-# camera_host: B1 보드의 IP. B1 보드에서 `hostname -I` 실행해서 확인 (README.md 3항 참고).
+# ===== 사용자 설정 =====
+# B1 카메라 보드의 IP. launch의 camera_host 인자가 있으면 그 값이 우선한다.
 camera_host: "192.168.0.6"
 
-# google_maps_api_key는 여기(gcs_params.yaml)가 아니라 같은 폴더의 gcs_secrets.yaml에
-# 넣으세요. 이 파일(gcs_params.yaml)은 git에 커밋되는 파일이라 키를 여기 적으면
-# 저장소에 그대로 노출됩니다. 실제로 값을 읽는 파일: src/usv_gcs/config/gcs_secrets.yaml
-# (확장자 뒤에 .example이 안 붙은 쪽 — 그 파일은 .gitignore에 등록되어 커밋되지 않습니다)
+# Google Maps API 키는 gcs_secrets.yaml.example을 복사해 gcs_secrets.yaml에 설정한다.
