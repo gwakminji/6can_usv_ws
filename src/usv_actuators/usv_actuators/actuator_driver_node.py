@@ -28,9 +28,6 @@
 주의: 여기서 말하는 LED는 B2 보드에 물리적으로 배선된, 분수 펌프 옆의 별도 RGB
 LED 조명이다. UNO Q 보드 자체의 내장 상태표시 LED와는 다른 하드웨어다.
 
-배터리 계측 역할은 이 노드에 없다. 전류 센서 4개가 전부 B1 보드에 물려있어서
-usv_sensors의 current_sensor_node가 /battery/status로 통합 발행한다.
-
 TODO(하드웨어 확정 필요): 펌프 릴레이/LED 드라이버 배선이 아직 없어서 MCU RPC
 메서드 이름(set_pump, set_actuator_led)은 임시로 정한 것이다. Arduino 스케치 쪽에
 해당 RPC 핸들러를 구현해야 실제로 동작한다.
@@ -211,7 +208,7 @@ class ActuatorDriverNode(Node):
     def on_tick(self):
         """수질 데이터가 끊기면 펌프를 끈다.
 
-        B1이 죽거나 Wi-Fi가 끊겼는데 펌프가 켜진 채로 방치되면 배터리만 축난다.
+        B1이 죽거나 Wi-Fi가 끊겼을 때 펌프가 켜진 채로 방치되지 않도록 한다.
         단, 사람이 방금 켠 펌프를 두절 감지가 꺼버리면 안 되므로 수동 억제 중에는
         건드리지 않는다.
         """

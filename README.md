@@ -7,8 +7,7 @@
 6can은 인천 지역사회의 수질 환경 문제를 해결하기 위해 팀 **Eco Bridge AI**가 진행한
 PBL(Problem-Based Learning) 기반 사회공헌 프로젝트입니다. 무인수상정(USV)이 수면을
 직접 순찰하며 수질(탁도·pH·용존산소·수온)을 실시간으로 측정하고, 측정값에 따라
-정화 펌프가 자동으로 반응합니다. 모든 데이터는 웹 대시보드로 시각화되어 누구나 현재
-호수 상태를 확인할 수 있습니다.
+정화 펌프를 제어하도록 설계했습니다. 수질과 위치 데이터는 웹 대시보드에 표시됩니다.
 
 ## 📷 활동 사진 및 시연 영상
 
@@ -44,9 +43,9 @@ PBL(Problem-Based Learning) 기반 사회공헌 프로젝트입니다. 무인수
 ## 🎯 핵심 목표
 
 - 🌐 **실시간 수질 모니터링** — 탁도, pH, 용존산소, 수온을 무인선이 상시 측정
-- 🤖 **자동 반응형 정화** — 측정된 수질 등급에 따라 정화 펌프가 자동으로 작동
+- 🤖 **자동 반응형 정화** — 측정된 수질 등급에 따라 정화 펌프를 제어하는 기능을 목표로 함
 - 🕹️ **원격 조종 지원** — 필요 시 조이스틱으로 무인선을 직접 조종 가능
-- 📊 **시민 친화적 시각화** — 웹 대시보드에서 실시간 수질·위치·배터리 상태를 누구나 확인
+- 📊 **시민 친화적 시각화** — 웹 대시보드에서 수질 상태와 GPS 미니맵을 확인
 - 💸 **저비용 오픈 하드웨어 기반** — 범용 SBC(Arduino UNO Q)·오픈소스 소프트웨어(ROS 2)로 구현해 재현·확장이 쉬운 구조
 
 ---
@@ -67,14 +66,20 @@ PBL(Problem-Based Learning) 기반 사회공헌 프로젝트입니다. 무인수
 
 | 파트 | 보드 | 역할 | 핵심 기술 스택 |
 |---|---|---|---|
-| 🔧 **HW — 센싱/정화** | B1 (Arduino UNO Q) | 수질·GPS·배터리 전류 센싱, 수면/수중 영상 촬영, 정화 펌프 구동 | ROS 2 Jazzy(Docker), I2C 센서, OpenCV(V4L2 카메라 캡처), MCU RPC |
-| 🔧 **HW — 구동** | B2 (Arduino UNO Q) | 추진기 PWM 제어(`/cmd_vel` 구독) | ROS 2 Jazzy(Docker), PWM 모터 드라이버 |
+| 🔧 **HW — 센싱/영상/정화** | B1 (Arduino UNO Q) | 수질·GPS 센서, 수면/수중 카메라, 펌프·LED가 연결된 보드 | ROS 2 Jazzy(Docker), MCU RPC, OpenCV(V4L2), MJPEG |
+| 🔧 **HW — 추진** | B2 (Arduino UNO Q) | 추진기만 연결된 별도 보드 | ROS 2 Jazzy(Docker), PWM 모터 드라이버, MCU RPC |
 | 💻 **SW/GUI — 관제** | GCS (Raspberry Pi) | 조이스틱 입력 → 조종 명령 변환, 센서/영상 데이터 수신 후 웹 대시보드로 시각화 | ROS 2(네이티브), Python(Flask), HTML5 Canvas, HTTP 폴링·MJPEG 스트리밍 |
 
 **통신 구조**: 보드 사이(B1·B2·GCS)는 ROS 2 DDS 기반 발행/구독(pub-sub)으로 연결되어
 있고, GCS는 수신한 최신 상태를 자체 웹 서버(Flask)가 REST 엔드포인트(`/api/state`)로
-변환해 브라우저가 주기적으로 폴링하는 구조입니다. 카메라 영상은 B1이 MJPEG로 직접
-스트리밍해 GCS를 거치지 않고 브라우저가 바로 수신합니다.
+변환해 브라우저가 200ms 간격으로 폴링합니다. 웹 보트 위치는 `/cmd_vel`에 따라
+움직이고 GPS는 미니맵에만 사용됩니다. 카메라 영상은 B1이 MJPEG로 직접 송출해
+브라우저가 GCS를 거치지 않고 수신합니다.
+
+**현재 실행 설정 확인 필요:** 펌프·LED는 실제로 B1에 연결돼 있지만,
+`actuators.launch.py`는 `actuator_driver_node`를 B2에서 실행합니다. 이 노드는
+로컬 MCU RPC를 사용하므로 현재 배선에서 펌프·LED 제어가 가능한지는 확인이 필요합니다.
+이번 문서 정리에서는 보드 실행 코드와 자동 실행 스크립트를 변경하지 않았습니다.
 
 ### 📡 시스템 구조도
 
@@ -89,10 +94,9 @@ flowchart LR
     GUI[gui_main_node]
   end
 
-  subgraph B1S["HW · B1 — 센싱"]
+  subgraph B1S["HW · B1 — 수질·GPS 센서"]
     WQN[water_quality_node]
     GPSN[gps_driver_node]
-    CSN[current_sensor_node]
   end
 
   subgraph B1C["HW · B1 — 카메라"]
@@ -100,12 +104,13 @@ flowchart LR
     HVS[http_video_server]
   end
 
-  subgraph B1A["HW · B1 — 정화"]
-    ACT[actuator_driver_node]
+  subgraph B1A["HW · B1 — 실제 펌프·LED 배선"]
+    PUMP[펌프·LED MCU]
   end
 
-  subgraph B2["HW · B2 — 구동"]
+  subgraph B2["HW · B2 — 실제 추진기 배선 및 현재 실행 설정"]
     THR[thruster_driver_node]
+    ACT[actuator_driver_node · 현재 B2에서 실행]
   end
 
   J2C -->|/cmd_vel| GUI
@@ -122,13 +127,13 @@ flowchart LR
   WQN -->|/water_quality/data| ACT
   GPSN -->|/gps/fix, /gps/has_fix| GUI
   GPSN -.->|/gps/satellites, /gps/status| DIAG
-  CSN -->|/battery/status| GUI
 
   CAMN --> HVS
   HVS -. "HTTP :8000 (MJPEG)" .-> BROWSER
   GUI -. "HTTP :8000 (대시보드)" .-> BROWSER
 
   ACT -->|/actuator/pump_state| GUI
+  ACT -.->|로컬 RPC 대상과 실제 배선 불일치 · 확인 필요| PUMP
 ```
 
 ### 🔩 설계 및 실물 하드웨어
@@ -176,7 +181,7 @@ flowchart LR
 
 | 파라미터 | 위치 | 기본값 | 언제 바꾸나 |
 |---|---|---|---|
-| `camera_host` | `src/usv_gcs/config/gcs_params.yaml` 또는 `gcs.launch.py` 인자 | *(필수, 기본 없음)* | B1 보드의 실제 IP로 설정. 안 하면 카메라 스트림 연결 실패 |
+| `camera_host` | `src/usv_gcs/config/gcs_params.yaml` 또는 `gcs.launch.py` 인자 | `192.168.0.6` (설정 파일 예시) | B1 보드의 실제 IP로 변경 |
 | `linear_axis` / `angular_axis` / `angular_scale` | `gcs.launch.py` 인자 | `1` / `0` / `-1.0` | 실제 조이스틱 축 번호·방향이 다를 때 |
 | `pump_button` / `auto_button` | `gcs.launch.py` 인자 | `0`(A) / `1`(B) | 조이스틱 버튼 배치가 다를 때 |
 | `linear_ramp_rate` / `angular_ramp_rate` | `src/usv_gcs/usv_gcs/joy_to_cmd_node.py`의 `declare_parameter` 기본값 (launch 인자 아님 — 일부러 여기 한 곳만 유지) | `0.2` / `0.4` | 조이스틱을 급히 꺾어도 속도가 얼마나 천천히 올라갈지 조정할 때 |
@@ -185,7 +190,7 @@ flowchart LR
 | `bad_below` / `good_above` / `*_manual_hold_s` | `actuators.launch.py` 인자 | `40.0` / `60.0` / `60.0`초 | 실측 수질 범위·자동/수동 우선 시간 조정 시 |
 | `BACK_GAMEPAD_BUTTON_INDEX` | `dashboard_html.py` 상수 | `8`(추정치) | 실기기로 검증 후 정확한 값으로 |
 | `SHOW_SURFACE_CAM` / `SHOW_UNDERWATER_CAM` | `dashboard_html.py` 상단 상수 | `true` / `true` | 수면/수중 카메라 박스를 각각 껐다 켜려면 `false`/`true`로 |
-| `surface_device` / `underwater_device` | `camera_streaming.launch.py` 인자 | `/dev/video0` / `/dev/video4` | USB 카메라 재연결로 장치 번호가 바뀌었을 때 (`v4l2-ctl --list-devices`로 확인) |
+| `surface_device` / `underwater_device` | `camera_streaming.launch.py` 인자 | `/dev/video2` / `/dev/video3` | USB 카메라 재연결로 장치 번호가 바뀌었을 때 (`v4l2-ctl --list-devices`로 확인) |
 
 `dashboard_html.py`처럼 코드 상수를 바꾼 경우, 파일만 고치고 끝이 아니라
 **`gui_main_node`를 재시작**해야 브라우저에 반영됩니다 (HTML/JS가 프로세스 시작 시
@@ -196,22 +201,20 @@ flowchart LR
 ## 🚀 실행 방법
 
 ```bash
-# 1. B1 (센서 + 카메라 + 정화) — 전원 인가 시 자동 실행되거나
+# 1. B1 (센서 + 카메라; 펌프·LED는 B1에 배선됨)
 ./start_b1.sh
 
-# 2. B2 (추진기) — 전원 인가 시 자동 실행되거나
+# 2. B2 (추진기; 현재 액추에이터 제어 노드도 함께 시작됨)
 cd src/usv_actuators && ./start_actuators.sh
 
 # 3. GCS (관제) — 조이스틱 연결 후
 sudo apt install ros-jazzy-joy
 colcon build --symlink-install --packages-select usv_gcs
-source install/setup.bash 혹은 sb
-ros2 launch usv_gcs gcs.launch.py 
-
-# 4. 브라우저에서 접속
-http://<GCS_IP>:8000 혹은 http://localhost:8000
-
+source install/setup.bash
+ros2 launch usv_gcs gcs.launch.py
 ```
+
+브라우저 주소: `http://<GCS_IP>:8000` (GCS에서 열면 `http://localhost:8000`)
 
 B1/B2는 `install_*_autostart.sh`로 부팅 자동 실행을 등록해두면 이후엔 전원만 넣으면
 됩니다. 개별 보드 빌드/자동 실행 세부 설정, 컨테이너 구성은 `src/<패키지>/` 아래
@@ -249,6 +252,5 @@ setInterval(() => console.log(navigator.getGamepads()[0]?.buttons.map((b,i)=>b.p
 - 인터페이스 계약(토픽 이름/타입), 보드별 상세 빌드 옵션, Docker/systemd 구성은 각
   패키지(`src/usv_sensors`, `src/usv_actuators`, `src/camera_streaming`, `src/usv_gcs`)의
   launch 파일과 스크립트 주석에 정리되어 있습니다.
-- `usv_actuators` 패키지는 `actuator_driver_node`(펌프, B1에서 실행)와
-  `thruster_driver_node`(추진기, B2에서 실행) 두 실행 파일을 포함하며, 배포
-  스크립트(`start_b1.sh`/`actuators.launch.py`)의 보드별 분리 정리는 진행 중입니다.
+- 현재 `usv_actuators` 패키지는 추진기 노드와 펌프·LED 제어 노드를 모두 B2에서
+  시작합니다. 실제 배선은 B1에 펌프·LED, B2에 추진기만 연결된 구성입니다.

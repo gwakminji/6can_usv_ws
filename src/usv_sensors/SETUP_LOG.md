@@ -80,7 +80,7 @@ sketch.ino:346:20: error: 'AdcAccumulator' was not declared in this scope
 - App Lab: `user:usv_sensors` → `running`
 - `docker ps`: `usv_sensors_container` 정상 기동
 - `ros2 topic list` (컨테이너 안):
-  `/water_quality/*`, `/gps/*`, `/battery/status`,
+  `/water_quality/*`, `/gps/*`,
   `/camera/surface,underwater/image_raw`(별도 `camera_streaming` 컨테이너),
   `/parameter_events`, `/rosout` 전부 정상 발행
 
@@ -96,9 +96,6 @@ sketch.ino:346:20: error: 'AdcAccumulator' was not declared in this scope
 - **GPS (fix=false, satellites=0)**: 실내라 위성 신호 미수신 — 예상된 정상 동작.
 - **camera**: USB 카메라 미연결 상태라 아직 검증 안 함(`camera_streaming` 컨테이너
   자체는 이전부터 떠 있음).
-- **current_sensor_node**: `get_battery_status method not available` 경고 지속 —
-  README 체크리스트에 이미 "하드웨어 미확정, sketch.ino 반영 필요"로 표시된
-  기존 TODO 항목이라 이번 작업에서는 손대지 않음.
 
 ## 파일 위치 요약
 

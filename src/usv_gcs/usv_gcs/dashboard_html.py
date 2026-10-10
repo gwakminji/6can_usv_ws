@@ -221,9 +221,6 @@ let sensorWQ = {
     turbidity_voltage_v: null, clarity_pct: null, clarity_level: null
 };
 
-let batteryStatus = null;
-let batteryWarningPct = 20;
-
 async function refreshState() {
     try {
         const res = await fetch('/api/state');
@@ -263,8 +260,6 @@ async function refreshState() {
             updateLedUi();
         }
 
-        batteryStatus = s.battery_status;
-        if (s.battery_warning_pct !== undefined) batteryWarningPct = s.battery_warning_pct;
     } catch (e) {
         console.error(e);
     }
@@ -806,20 +801,6 @@ setInterval(() => {
     }
 }, 1000);
 
-function batterySummaryText() {
-    if (!batteryStatus) return "🔋 배터리: 데이터 없음";
-    const labels = { thruster1: "추진1", thruster2: "추진2", pump_ctrl: "펌프/제어", sensor_board: "센서" };
-    let parts = [];
-    for (const key of Object.keys(labels)) {
-        const item = batteryStatus[key];
-        if (!item) continue;
-        const pct = item.percentage;
-        const warn = (pct !== undefined && pct < batteryWarningPct) ? "⚠" : "";
-        parts.push(`${labels[key]} ${pct ?? '-'}%${warn}`);
-    }
-    return parts.length ? `🔋 ${parts.join(' ')}` : "🔋 배터리: 데이터 없음";
-}
-
 // 게임 중에만 캔버스 너비를 늘리고, 시작·종료 화면은 800×600을 유지한다.
 function updateResponsiveCanvas() {
     // 카메라와 제어 패널은 게임 중에만 표시한다.
@@ -1265,10 +1246,6 @@ function mainLoop() {
 
         ctx.fillStyle = "#06d6a0";
         ctx.fillRect(sidebarX + 36, 213, intRange(158 * ratio), 10);
-
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "9px '맑은 고딕'";
-        ctx.fillText(batterySummaryText(), sidebarX + 115, 236);
 
         // 뽑기 칸 (사이드바 맨 위 칸, 퀘스트 칸보다 위) - 압축된 버튼만 넣었다. 등급표/힌트
         // 문구는 공간이 없어 뺐고, 버튼(마우스 클릭 - 클릭 핸들러 참고)과 조이스틱 Y 버튼

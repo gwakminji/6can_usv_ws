@@ -22,8 +22,6 @@ from std_msgs.msg import String
 from .dashboard_html import INDEX_HTML
 
 # ===== 사용자 설정 =====
-# 배터리 사양 확정 후 경고 기준을 조정한다.
-BATTERY_WARNING_PCT = 20
 # 테스트할 때만 True로 설정한다. GPS는 웹 미니맵에서만 사용한다.
 USE_FIXED_GPS = False
 INITIAL_LATITUDE = 37.3898
@@ -45,7 +43,6 @@ class GuiMainNode(Node):
             'water_quality': None,
             'gps_fix': None,
             'gps_has_fix': None,
-            'battery_status': None,
             'cmd_vel': None,
             'pump_on': None,
             'pump_state': None,
@@ -65,7 +62,6 @@ class GuiMainNode(Node):
         self.create_subscription(String, '/water_quality/data', self.on_water_quality, 10)
         self.create_subscription(NavSatFix, '/gps/fix', self.on_gps_fix, 10)
         self.create_subscription(Bool, '/gps/has_fix', self.on_gps_has_fix, 10)
-        self.create_subscription(String, '/battery/status', self.on_battery_status, 10)
         self.create_subscription(Twist, '/cmd_vel', self.on_cmd_vel, 10)
         self.create_subscription(Bool, '/actuator/pump_cmd', self.on_pump_cmd, 10)
         self.create_subscription(Bool, '/actuator/pump_state', self.on_pump_state, 10)
@@ -108,14 +104,6 @@ class GuiMainNode(Node):
             return
         with self.state_lock:
             self.state['gps_has_fix'] = msg.data
-
-    def on_battery_status(self, msg: String):
-        try:
-            data = json.loads(msg.data)
-        except (TypeError, ValueError):
-            return
-        with self.state_lock:
-            self.state['battery_status'] = data
 
     def on_cmd_vel(self, msg: Twist):
         with self.state_lock:
@@ -233,9 +221,7 @@ def create_app(node: GuiMainNode) -> Flask:
 
     @app.get('/api/state')
     def api_state():
-        state = node.snapshot()
-        state['battery_warning_pct'] = BATTERY_WARNING_PCT
-        return jsonify(state)
+        return jsonify(node.snapshot())
 
     @app.post('/api/led')
     def api_led():

@@ -1,4 +1,4 @@
-"""B1 보드 launch 파일 — water_quality_node + gps_driver_node + current_sensor_node.
+"""B1 보드 launch 파일 — water_quality_node + gps_driver_node.
 
 카메라(/camera/surface/image_raw, /camera/underwater/image_raw)는 이제 이 launch 파일이
 아니라 별도 컨테이너인 camera_streaming 패키지(camera_node + http_video_server)가 담당한다
@@ -15,5 +15,4 @@ def generate_launch_description():
     return LaunchDescription([
         Node(package='usv_sensors', executable='water_quality_node', name='water_quality_node'),
         Node(package='usv_sensors', executable='gps_driver_node', name='gps_driver_node'),
-        Node(package='usv_sensors', executable='current_sensor_node', name='current_sensor_node'),
     ])

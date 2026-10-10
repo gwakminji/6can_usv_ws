@@ -1,4 +1,4 @@
-"""Validation helper for battery percentage values received through the Bridge."""
+"""Validate integer values received through the Bridge."""
 
 
 def bounded_integer(value, minimum, maximum, default=0):
