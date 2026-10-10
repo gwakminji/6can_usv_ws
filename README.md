@@ -10,6 +10,16 @@ PBL(Problem-Based Learning) 기반 사회공헌 프로젝트입니다. 무인수
 정화 펌프가 자동으로 반응합니다. 모든 데이터는 웹 대시보드로 시각화되어 누구나 현재
 호수 상태를 확인할 수 있습니다.
 
+## 📷 활동 사진 및 시연 영상
+
+인천 센트럴파크에서 띄운 수상정, 보트 모습, 지역사회 의견 수집 사진입니다. 사진을 누르면 원본을 볼 수 있습니다.
+
+| 인천 센트럴파크에서 띄운 수상정 | 6can 보트 이미지 | 공원·호수에 관한 지역사회 의견판 |
+|---|---|---|
+| [![인천 센트럴파크 수면에 떠 있는 파란색 수상정](media/usv-on-water.png)](media/usv-on-water.png) | [![파란색 6can 보트의 모습](media/usv-boat.png)](media/usv-boat.png) | [![공원과 호수에 관한 의견이 붙은 게시판](media/community-feedback-board.png)](media/community-feedback-board.png) |
+
+**시연 영상:** [인천 센트럴파크에서 수상정이 물을 분사하는 모습 보기 (MP4)](media/usv-water-spray-demo.mp4)
+
 ---
 
 ## 📌 추진 배경 및 문제 정의
