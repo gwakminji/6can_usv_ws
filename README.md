@@ -1,3 +1,5 @@
+[한국어](README.md) | [English](README_EN.md)
+
 # 🌊 6can
 ### by Team Eco Bridge AI
 
