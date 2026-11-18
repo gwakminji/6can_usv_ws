@@ -13,11 +13,11 @@ PBL(Problem-Based Learning) 기반 사회공헌 프로젝트입니다. 무인수
 
 ## 📷 활동 사진 및 시연 영상
 
-인천 센트럴파크에서 띄운 수상정, 보트 모습, 지역사회 의견 수집 사진입니다. 사진을 누르면 원본을 볼 수 있습니다.
+인천 센트럴파크에서 띄운 수상정, 보트 모습, 야간 LED 점등 모습, 지역사회 의견 수집 사진입니다. 사진을 누르면 원본을 볼 수 있습니다.
 
-| 인천 센트럴파크에서 띄운 수상정 | 6can 보트 이미지 | 공원·호수에 관한 지역사회 의견판 |
-|---|---|---|
-| [![인천 센트럴파크 수면에 떠 있는 파란색 수상정](media/usv-on-water.png)](media/usv-on-water.png) | [![파란색 6can 보트의 모습](media/usv-boat.png)](media/usv-boat.png) | [![공원과 호수에 관한 의견이 붙은 게시판](media/community-feedback-board.png)](media/community-feedback-board.png) |
+| 인천 센트럴파크에서 띄운 수상정 | 6can 보트 이미지 | 야간 LED 점등 모습 | 공원·호수에 관한 지역사회 의견판 |
+|---|---|---|---|
+| [![인천 센트럴파크 수면에 떠 있는 파란색 수상정](media/usv-on-water.png)](media/usv-on-water.png) | [![파란색 6can 보트의 모습](media/usv-boat.png)](media/usv-boat.png) | [![야간에 초록색 LED를 점등한 6can 보트](media/usv-night-led.jpg)](media/usv-night-led.jpg) | [![공원과 호수에 관한 의견이 붙은 게시판](media/community-feedback-board.png)](media/community-feedback-board.png) |
 
 **시연 영상:** [인천 센트럴파크에서 수상정이 물을 분사하는 모습 보기 (MP4)](media/usv-water-spray-demo.mp4)
 
