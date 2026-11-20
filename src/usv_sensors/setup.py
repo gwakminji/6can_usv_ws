@@ -28,6 +28,7 @@ setup(
             'water_quality_node = usv_sensors.water_quality_node:main',
             'camera_node = usv_sensors.camera_node:main',
             'gps_driver_node = usv_sensors.gps_driver_node:main',
+            'current_sensor_node = usv_sensors.current_sensor_node:main',
         ],
     },
 )
