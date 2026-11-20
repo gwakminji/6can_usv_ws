@@ -1,0 +1,29 @@
+[Unit]
+# B1 보드의 펌프 노드(actuator_driver_node)를 부팅 시 자동으로 띄운다.
+# usv-sensors.service의 검증된 패턴을 그대로 따랐다.
+#
+# usv-sensors.service와 달리 Arduino App을 시작하지 않는다. 부팅 시에는 App Lab
+# 데몬이 이미 usv_sensors 앱을 복원해서 SWD GPIO를 쥐고 있어서, 거기서 다시
+# app start를 하면 "Error requesting gpio line swdio"로 실패한다.
+# (usv-sensors.service가 매 부팅 실패하는 원인이 바로 그것이다.)
+# start_pump_b1.sh는 도커 컨테이너만 띄우므로 그 충돌이 없다.
+Description=USV B1 board pump actuator (actuator_driver_node) ROS 2 stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=arduino
+Group=arduino
+SupplementaryGroups=docker
+Environment=HOME=/home/arduino
+Environment=USV_ACTUATORS_PROJECT_DIR=/home/arduino/6can_usv_ws/src/usv_actuators
+ExecStart=/home/arduino/6can_usv_ws/src/usv_actuators/start_pump_b1.sh
+ExecStop=-/usr/bin/docker stop usv_pump_container
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

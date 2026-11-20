@@ -1,0 +1,8 @@
+profiles:
+  default:
+    fqbn: arduino:zephyr:unoq
+    platforms:
+      - platform: arduino:zephyr
+    libraries:
+      - Adafruit NeoPixel (1.15.5)
+default_profile: default

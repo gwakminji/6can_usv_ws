@@ -1,50 +1,160 @@
 #include <Arduino_RouterBridge.h>
-#include <Servo.h>
+#include <SPI.h>
 
-const int LEFT_PWM_PIN  = 9;
-const int RIGHT_PWM_PIN = 10;
+const int PUMP_PIN = 7;
+const bool PUMP_ACTIVE_LOW = true;
 
-const int NEUTRAL_US = 1487;
-const unsigned long FAILSAFE_MS = 500;
+int set_pump(bool on) {
+  digitalWrite(PUMP_PIN, (on ^ PUMP_ACTIVE_LOW) ? HIGH : LOW);
+  return 1;
+}
 
-Servo left_thruster;
-Servo right_thruster;
+// LED: WS2812B 15°³ x 2ÁÙ, µÎ ½ºÆ®¸³ DIN ¸ðµÎ D11(SPI2 MOSI)¿¡ ¿¬°á.
+// NeoPixel ¶óÀÌºê·¯¸®´Â show() µ¿¾È ÀÎÅÍ·´Æ®¸¦ ²¨¼­(~0.45ms) Bridge ½Ã¸®¾ó
+// (lpuart1, DMA/FIFO ¾øÀ½) ¹ÙÀÌÆ®°¡ À¯½ÇµÇ°í MCU ÀüÃ¼°¡ ¸ØÃè´Ù.
+// SPI ÇÏµå¿þ¾î·Î ÆÄÇüÀ» ¸¸µé¸é ÀÎÅÍ·´Æ®¸¦ ²ø ÇÊ¿ä°¡ ¾ø´Ù.
+// SPI 2.5MHz(400ns/ºñÆ®)¿¡¼­ WS2812 1ºñÆ® = SPI 3ºñÆ®: 1 ¡æ 110, 0 ¡æ 100
+#define NUMPIXELS 15
+#define LED_DATA_PIN 11                // D11 = SPI2 MOSI
+const int LED_BRIGHTNESS = 50;
+const uint32_t LED_SPI_HZ = 3000000;   // STM32 ºÐÁÖ·Î ½ÇÁ¦ 2.5MHz°¡ ¼±ÅÃµÊ
+#define LED_RESET_BYTES 100            // ¾ÕµÚ 0 x 100¹ÙÀÌÆ® = 320us low (ÁÙÀÌ¸é »öÀÌ ±úÁü)
+uint8_t ledSpiBuf[LED_RESET_BYTES + NUMPIXELS * 9 + LED_RESET_BYTES];
+uint8_t ledPixels[NUMPIXELS][3];       // ÀÌ ½ºÆ®¸³Àº ¿ÍÀÌ¾î ¼ø¼­°¡ R, G, B
 
-unsigned long last_cmd_ms = 0;
+// show()´Â »öÀÌ ¹Ù²ð ¶§¸¸ È£ÃâÇÏ°í, ¹«Áö°³´Â ¾Ö´Ï¸ÞÀÌ¼Ç ¾øÀÌ
+// LED¸¶´Ù ´Ù¸¥ »öÀ» ÇÑ ¹ø¸¸ Ä¥ÇÑ´Ù.
+bool ledRainbowOn = false;
+int ledR = -1, ledG = -1, ledB = -1;
 
-int set_thruster_pwm(int left_us, int right_us) {
-  left_us  = constrain(left_us,  1000, 2000);
-  right_us = constrain(right_us, 1000, 2000);
+void ledShow()
+{
+  int k = 0;
+  memset(ledSpiBuf, 0, LED_RESET_BYTES);
+  k += LED_RESET_BYTES;
 
-  left_thruster.writeMicroseconds(left_us);
-  right_thruster.writeMicroseconds(right_us);
+  for (int i = 0; i < NUMPIXELS; i++)
+  {
+    for (int c = 0; c < 3; c++)
+    {
+      uint8_t v = (ledPixels[i][c] * (LED_BRIGHTNESS + 1)) >> 8;
+      uint32_t bits = 0;
 
-  last_cmd_ms = millis();
+      for (int j = 7; j >= 0; j--)
+        bits = (bits << 3) | (((v >> j) & 1) ? 0b110 : 0b100);
+
+      ledSpiBuf[k++] = bits >> 16;
+      ledSpiBuf[k++] = bits >> 8;
+      ledSpiBuf[k++] = bits;
+    }
+  }
+
+  memset(ledSpiBuf + k, 0, LED_RESET_BYTES);
+
+  SPI.begin();  // D11À» SPI(MOSI)·Î µÇµ¹¸²
+  SPI.beginTransaction(SPISettings(LED_SPI_HZ, MSBFIRST, SPI_MODE0));
+  SPI.transfer(ledSpiBuf, sizeof(ledSpiBuf));
+  SPI.endTransaction();
+
+  // SPI°¡ ²¨Áö¸é MOSI°¡ LOW·Î À¯ÁöµÇÁö ¾Ê¾Æ »öÀÌ ±úÁ³´Ù.
+  // Àü¼Û »çÀÌ¿¡´Â GPIO LOW·Î °íÁ¤ ¡æ LED°¡ ¸®¼Â(·¡Ä¡)À» È®½ÇÈ÷ ¹Þ´Â´Ù.
+  pinMode(LED_DATA_PIN, OUTPUT);
+  digitalWrite(LED_DATA_PIN, LOW);
+}
+
+void ledSetPixel(int i, int r, int g, int b)
+{
+  ledPixels[i][0] = r;
+  ledPixels[i][1] = g;
+  ledPixels[i][2] = b;
+}
+
+void applyLed(int r, int g, int b)
+{
+  if (r == ledR && g == ledG && b == ledB)
+    return;
+
+  ledR = r;
+  ledG = g;
+  ledB = b;
+
+  for (int i = 0; i < NUMPIXELS; i++)
+    ledSetPixel(i, r, g, b);
+
+  ledShow();
+}
+
+int set_actuator_led(int r, int g, int b)
+{
+  // ¹«Áö°³ Áß¿¡´Â ´Ü»ö ¸í·ÉÀ» ¹«½ÃÇÑ´Ù (²ô·Á¸é set_led_rainbow(false)).
+  if (ledRainbowOn)
+    return 0;
+
+  applyLed(r, g, b);
+  return 1;
+}
+
+void hueToRgb(float hue, int &r, int &g, int &b)
+{
+  float h = hue * 6.0;
+  int i = (int)h;
+  float f = h - i;
+  float q = 1.0 - f;
+  float fr, fg, fb;
+
+  if      (i == 0) { fr = 1.0; fg = f;   fb = 0.0; }
+  else if (i == 1) { fr = q;   fg = 1.0; fb = 0.0; }
+  else if (i == 2) { fr = 0.0; fg = 1.0; fb = f;   }
+  else if (i == 3) { fr = 0.0; fg = q;   fb = 1.0; }
+  else if (i == 4) { fr = f;   fg = 0.0; fb = 1.0; }
+  else             { fr = 1.0; fg = 0.0; fb = q;   }
+
+  r = round(fr * 255);
+  g = round(fg * 255);
+  b = round(fb * 255);
+}
+
+int set_led_rainbow(bool on)
+{
+  if (!on)
+  {
+    ledRainbowOn = false;
+    applyLed(0, 0, 0);
+    return 1;
+  }
+
+  if (ledRainbowOn)
+    return 1;
+  ledRainbowOn = true;
+
+  // ½ºÆ®¸³ ±æÀÌ¸¸Å­ »¡°­¡æº¸¶ó ¹«Áö°³¸¦ °íÁ¤À¸·Î Ä¥ÇÑ´Ù.
+  for (int i = 0; i < NUMPIXELS; i++)
+  {
+    int r, g, b;
+    hueToRgb((float)i / NUMPIXELS, r, g, b);
+    ledSetPixel(i, r, g, b);
+  }
+
+  ledShow();
+
+  ledR = ledG = ledB = -1;  // ´ÙÀ½ ´Ü»ö ¸í·ÉÀÌ ¹Ýµå½Ã Àû¿ëµÇµµ·Ï
   return 1;
 }
 
 void setup() {
+  pinMode(PUMP_PIN, OUTPUT);
+  set_pump(false);
+
+  SPI.begin();
+  applyLed(0, 0, 0);  // ½ÃÀÛÀº ²¨Áø »óÅÂ·Î ´ë±â
+
   Bridge.begin();
   Monitor.begin(115200);
-
-  left_thruster.attach(LEFT_PWM_PIN, 1000, 2000);
-  right_thruster.attach(RIGHT_PWM_PIN, 1000, 2000);
-
-  left_thruster.writeMicroseconds(NEUTRAL_US);
-  right_thruster.writeMicroseconds(NEUTRAL_US);
-  delay(2000);
-
-  Bridge.provide("set_thruster_pwm", set_thruster_pwm);
-
-  last_cmd_ms = millis();
-  Monitor.println("Thruster bridge ready.");
+  Bridge.provide("set_pump", set_pump);
+  Bridge.provide_safe("set_actuator_led", set_actuator_led);
+  Bridge.provide_safe("set_led_rainbow", set_led_rainbow);
+  Monitor.println("Pump + WS2812 LED bridge ready.");
 }
 
 void loop() {
-  // MCU ì¸¡ failsafe: 500ms ì´ìƒ ëª…ë ¹ì´ ì—†ìœ¼ë©´ ê°•ì œ ì¤‘ë¦½
-  if (millis() - last_cmd_ms > FAILSAFE_MS) {
-    left_thruster.writeMicroseconds(NEUTRAL_US);
-    right_thruster.writeMicroseconds(NEUTRAL_US);
-  }
-  delay(10);
 }
