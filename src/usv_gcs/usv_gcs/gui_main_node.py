@@ -21,20 +21,16 @@ from std_msgs.msg import String
 
 from .dashboard_html import INDEX_HTML
 
-# ===== 사용자 설정 =====
-# 테스트할 때만 True로 설정한다. GPS는 웹 미니맵에서만 사용한다.
-USE_FIXED_GPS = False
-INITIAL_LATITUDE = 37.3898
-INITIAL_LONGITUDE = 126.6390
-
-
 class GuiMainNode(Node):
 
     def __init__(self):
         super().__init__('gui_main_node')
 
         self.declare_parameter('http_port', 8000)
-        self.use_fixed_gps = USE_FIXED_GPS
+        self.gcs_config = _gcs_config_from_file()
+        self.use_fixed_gps = bool(self.gcs_config.get('use_fixed_gps', False))
+        self.initial_latitude = float(self.gcs_config.get('initial_latitude', 37.3898))
+        self.initial_longitude = float(self.gcs_config.get('initial_longitude', 126.6390))
         # launch 인자가 비어 있으면 config/gcs_params.yaml의 B1 주소를 사용한다.
         self.declare_parameter('camera_host', '')
 
@@ -54,8 +50,8 @@ class GuiMainNode(Node):
 
         if self.use_fixed_gps:
             self.state['gps_fix'] = {
-                'latitude': INITIAL_LATITUDE,
-                'longitude': INITIAL_LONGITUDE,
+                'latitude': self.initial_latitude,
+                'longitude': self.initial_longitude,
             }
             self.state['gps_has_fix'] = True
 
@@ -147,6 +143,17 @@ def _config_paths() -> list:
     return paths
 
 
+def _gcs_config_from_file() -> dict:
+    """GCS 기능 토글과 일반 설정을 단일 YAML 파일에서 읽는다."""
+    for config_path in _config_paths():
+        try:
+            with open(config_path, encoding='utf-8') as f:
+                return yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError):
+            continue
+    return {}
+
+
 def _secrets_config_paths() -> list:
     """Git에서 제외한 API 키 설정 파일의 후보 경로를 반환한다."""
     paths = []
@@ -208,11 +215,17 @@ def create_app(node: GuiMainNode) -> Flask:
             'ros2 launch usv_gcs gcs.launch.py camera_host:=<B1_IP> 로 넘길 것.'
         )
     google_maps_api_key = _google_maps_api_key_from_config(node)
+    config = node.gcs_config
 
     rendered_index_html = (
         INDEX_HTML
         .replace('__CAMERA_HOST__', camera_host)
         .replace('__GOOGLE_MAPS_API_KEY__', google_maps_api_key)
+        .replace('__SHOW_SURFACE_CAM__', json.dumps(bool(config.get('surface_camera_enabled', True))))
+        .replace('__SHOW_UNDERWATER_CAM__', json.dumps(bool(config.get('underwater_camera_enabled', True))))
+        .replace('__GPS_MINIMAP_ENABLED__', json.dumps(bool(config.get('gps_minimap_enabled', True))))
+        .replace('__GPS_BOAT_TRACKING_ENABLED__', json.dumps(bool(config.get('gps_boat_tracking_enabled', False))))
+        .replace('__GPS_BOAT_PIXELS_PER_METER__', json.dumps(float(config.get('gps_boat_pixels_per_meter', 3.0))))
     )
 
     @app.get('/')

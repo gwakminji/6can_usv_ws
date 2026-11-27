@@ -1,5 +1,26 @@
-# ===== 사용자 설정 =====
+# ===== GCS 사용자 설정 =====
+# 이 파일에서 GCS 화면 기능을 켜고 끈다. 수정 후 GCS 서비스를 재시작한다.
+
 # B1 카메라 보드의 IP. launch의 camera_host 인자가 있으면 그 값이 우선한다.
 camera_host: "192.168.0.6"
+
+# 화면 기능
+surface_camera_enabled: true
+underwater_camera_enabled: true
+gps_minimap_enabled: true
+
+# GPS 보트 추적
+# false: 조이스틱 /cmd_vel로 게임 화면의 보트를 이동한다. GPS는 미니맵 마커에만 표시한다.
+# true: GPS 좌표 변화로 게임 화면의 보트를 이동한다.
+#       이때 조이스틱 이동은 화면 보트에 적용하지 않는다.
+gps_boat_tracking_enabled: false
+
+# GPS 첫 Fix를 게임 화면 보트의 시작점으로 삼은 뒤, 실제 이동 거리 1 m를 아래 픽셀 수로 변환한다.
+gps_boat_pixels_per_meter: 3.0
+
+# 테스트용 고정 GPS 좌표. true이면 실제 /gps/fix 대신 아래 좌표를 미니맵에 표시한다.
+use_fixed_gps: false
+initial_latitude: 37.3898
+initial_longitude: 126.6390
 
 # Google Maps API 키는 gcs_secrets.yaml.example을 복사해 gcs_secrets.yaml에 설정한다.

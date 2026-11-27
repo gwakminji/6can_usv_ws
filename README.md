@@ -183,7 +183,7 @@ flowchart LR
 
 | 파라미터 | 위치 | 기본값 | 언제 바꾸나 |
 |---|---|---|---|
-| `camera_host` | `src/usv_gcs/config/gcs_params.yaml` 또는 `gcs.launch.py` 인자 | `192.168.0.6` (설정 파일 예시) | B1 보드의 실제 IP로 변경 |
+| `camera_host` | [gcs_params.yaml](src/usv_gcs/config/gcs_params.yaml) 또는 `gcs.launch.py` 인자 | `192.168.0.6` (설정 파일 예시) | B1 보드의 실제 IP로 변경 |
 | `linear_axis` / `angular_axis` / `angular_scale` | `gcs.launch.py` 인자 | `1` / `0` / `-1.0` | 실제 조이스틱 축 번호·방향이 다를 때 |
 | `pump_button` / `auto_button` | `gcs.launch.py` 인자 | `0`(A) / `1`(B) | 조이스틱 버튼 배치가 다를 때 |
 | `linear_ramp_rate` / `angular_ramp_rate` | `src/usv_gcs/usv_gcs/joy_to_cmd_node.py`의 `declare_parameter` 기본값 (launch 인자 아님 — 일부러 여기 한 곳만 유지) | `0.2` / `0.4` | 조이스틱을 급히 꺾어도 속도가 얼마나 천천히 올라갈지 조정할 때 |
@@ -191,12 +191,27 @@ flowchart LR
 | `max_pwm` | `actuators.launch.py` 인자 | `255` | 실제 모터 드라이버 PWM 사양 확정 후 |
 | `bad_below` / `good_above` / `*_manual_hold_s` | `actuators.launch.py` 인자 | `40.0` / `60.0` / `60.0`초 | 실측 수질 범위·자동/수동 우선 시간 조정 시 |
 | `BACK_GAMEPAD_BUTTON_INDEX` | `dashboard_html.py` 상수 | `8`(추정치) | 실기기로 검증 후 정확한 값으로 |
-| `SHOW_SURFACE_CAM` / `SHOW_UNDERWATER_CAM` | `dashboard_html.py` 상단 상수 | `true` / `true` | 수면/수중 카메라 박스를 각각 껐다 켜려면 `false`/`true`로 |
+| `surface_camera_enabled` / `underwater_camera_enabled` | [gcs_params.yaml](src/usv_gcs/config/gcs_params.yaml) | `true` / `true` | 수면/수중 카메라 박스를 각각 켜고 끌 때 |
 | `surface_device` / `underwater_device` | `camera_streaming.launch.py` 인자 | `/dev/video2` / `/dev/video3` | USB 카메라 재연결로 장치 번호가 바뀌었을 때 (`v4l2-ctl --list-devices`로 확인) |
 
-`dashboard_html.py`처럼 코드 상수를 바꾼 경우, 파일만 고치고 끝이 아니라
+GCS 설정 파일을 바꾼 경우, 파일만 고치고 끝이 아니라
 **`gui_main_node`를 재시작**해야 브라우저에 반영됩니다 (HTML/JS가 프로세스 시작 시
 메모리에 올라가는 구조라서 `--symlink-install`로도 핫리로드는 안 됩니다).
+
+### GCS 기능 ON/OFF 설정
+
+GCS 화면 기능은 [gcs_params.yaml](src/usv_gcs/config/gcs_params.yaml) 한 파일에서 관리합니다.
+값을 수정한 뒤에는 `gui_main_node` 또는 GCS 서비스를 재시작해야 웹 화면에 반영됩니다.
+
+| 설정 | `true`일 때 | `false`일 때 |
+|---|---|---|
+| `surface_camera_enabled` | 수면 카메라 표시 | 수면 카메라 숨김 |
+| `underwater_camera_enabled` | 수중 카메라 표시 | 수중 카메라 숨김 |
+| `gps_minimap_enabled` | GPS 미니맵 표시 | GPS 미니맵 비활성화 |
+| `gps_boat_tracking_enabled` | GPS 좌표로 게임 화면 보트 이동 | 조이스틱 `/cmd_vel`로 게임 화면 보트 이동, GPS는 미니맵에만 표시 |
+| `use_fixed_gps` | `initial_latitude`, `initial_longitude`의 테스트 좌표 사용 | 실제 GPS 토픽 사용 |
+
+`gps_boat_pixels_per_meter`는 GPS 보트 추적을 켰을 때 실제 이동 거리 1 m를 게임 화면에서 몇 픽셀로 보일지 조절합니다.
 
 ---
 

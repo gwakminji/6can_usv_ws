@@ -141,8 +141,11 @@ INDEX_HTML = """<!doctype html>
 <script src="lottie.min.js"></script>
 <script>
 // ===== 사용자 설정: 화면, 게임, 조이스틱 =====
-const SHOW_SURFACE_CAM = true;
-const SHOW_UNDERWATER_CAM = true;
+const SHOW_SURFACE_CAM = __SHOW_SURFACE_CAM__;
+const SHOW_UNDERWATER_CAM = __SHOW_UNDERWATER_CAM__;
+const GPS_MINIMAP_ENABLED = __GPS_MINIMAP_ENABLED__;
+const GPS_BOAT_TRACKING_ENABLED = __GPS_BOAT_TRACKING_ENABLED__;
+const GPS_BOAT_PIXELS_PER_METER = __GPS_BOAT_PIXELS_PER_METER__;
 const CAMERA_PORT = 8000;             // B1 카메라 스트림 포트
 const GPS_DEFAULT_LAT = 37.3898;     // GPS 수신 전 미니맵 중심
 const GPS_DEFAULT_LNG = 126.6390;
@@ -197,6 +200,7 @@ let currentLat = GPS_DEFAULT_LAT;
 let currentLng = GPS_DEFAULT_LNG;
 let miniMapHasGpsFix = false;
 let lastMiniMapUpdateMs = 0;
+let gpsBoatOrigin = null;
 
 function updateMiniMapUrl(lat, lng) {
     currentLat = lat ?? currentLat;
@@ -208,7 +212,23 @@ function updateMiniMapUrl(lat, lng) {
     };
 }
 
-updateMiniMapUrl(currentLat, currentLng);
+if (GPS_MINIMAP_ENABLED) updateMiniMapUrl(currentLat, currentLng);
+
+function updateBoatFromGps(lat, lng) {
+    // 첫 유효 GPS 위치는 현재 게임 보트 위치에 대응시킨다.
+    // 이후 위도·경도 차이를 미터 단위로 바꿔 게임 좌표로 투영한다.
+    if (!gpsBoatOrigin) {
+        gpsBoatOrigin = { lat, lng, x: targetX, y: targetY };
+        return;
+    }
+    const latitudeMeters = (lat - gpsBoatOrigin.lat) * 111320;
+    const longitudeMeters = (lng - gpsBoatOrigin.lng) * 111320 *
+        Math.cos(gpsBoatOrigin.lat * Math.PI / 180);
+    targetX = Math.max(30, Math.min(
+        gpsBoatOrigin.x + longitudeMeters * GPS_BOAT_PIXELS_PER_METER, mapWidth - 30));
+    targetY = Math.max(30, Math.min(
+        gpsBoatOrigin.y - latitudeMeters * GPS_BOAT_PIXELS_PER_METER, mapHeight - 30));
+}
 
 // ===== 서버 상태 =====
 let lastCmdVel = { linearX: 0, angularZ: 0 };
@@ -234,12 +254,15 @@ async function refreshState() {
         // gps_fix는 신호가 끊겨도 서버에 마지막 값이 남으므로 현재 Fix만 미니맵에 반영한다.
         miniMapHasGpsFix = Boolean(s.gps_has_fix === true && s.gps_fix &&
             Number.isFinite(s.gps_fix.latitude) && Number.isFinite(s.gps_fix.longitude));
-        if (miniMapHasGpsFix) {
+        if (miniMapHasGpsFix && GPS_MINIMAP_ENABLED) {
             const nowMs = Date.now();
             if (nowMs - lastMiniMapUpdateMs >= MINI_MAP_REFRESH_MS) {
                 lastMiniMapUpdateMs = nowMs;
                 updateMiniMapUrl(s.gps_fix.latitude, s.gps_fix.longitude);
             }
+        }
+        if (miniMapHasGpsFix && GPS_BOAT_TRACKING_ENABLED) {
+            updateBoatFromGps(s.gps_fix.latitude, s.gps_fix.longitude);
         }
 
         if (s.pump_on !== null && s.pump_on !== undefined) {
@@ -452,7 +475,7 @@ let ghostGoldTimer = 0;
 let mapWidth = MIN_MAP_WIDTH;
 const mapHeight = MAP_HEIGHT;
 
-// 게임 보트는 맵 중앙에서 시작하며 GPS와 연동하지 않는다.
+// 게임 보트는 중앙에서 시작한다. GPS 추적 ON이면 첫 GPS Fix를 이 시작점에 대응시킨다.
 let targetX = mapWidth / 2;
 let targetY = mapHeight / 2;
 
@@ -957,9 +980,9 @@ function mainLoop() {
     } else if (gameState === "game") {
         animTimer += 0.2;
 
-        // /cmd_vel(조이스틱 → joy_to_cmd_node의 실제 명령)을 화면 방향(dx,dy)으로
-        // 역변환한다. 게임 보트 위치와 방향은 이 명령만 사용하며 GPS와 연동하지 않는다.
-        const isMoving = hasBoatMotionCommand();
+        // GPS 보트 추적 OFF에서는 /cmd_vel을 화면 좌표로 변환해 게임 보트를 움직인다.
+        // GPS 보트 추적 ON에서는 refreshState()가 GPS 위치로 targetX/Y를 갱신한다.
+        const isMoving = !GPS_BOAT_TRACKING_ENABLED && hasBoatMotionCommand();
 
         if (isMoving) {
             if (activeCardShown) hideFishCardPopup();
@@ -1340,7 +1363,7 @@ function mainLoop() {
         ctx.fillRect(10, 10, 140, 165);
         ctx.strokeRect(10, 10, 140, 165);
 
-        if (miniMapImg.complete && miniMapImg.naturalWidth !== 0) {
+        if (GPS_MINIMAP_ENABLED && miniMapImg.complete && miniMapImg.naturalWidth !== 0) {
             ctx.drawImage(miniMapImg, 15, 15, 130, 137);
         } else {
             ctx.fillStyle = "#4078b4";
@@ -1348,7 +1371,7 @@ function mainLoop() {
         }
 
         // 정적맵은 현재 GPS 좌표를 중심에 놓는다. 게임 보트 좌표는 이 지도에 그리지 않는다.
-        if (miniMapHasGpsFix) {
+        if (GPS_MINIMAP_ENABLED && miniMapHasGpsFix) {
             ctx.fillStyle = "#38bdf8";
             ctx.strokeStyle = "#ffffff";
             ctx.lineWidth = 1;
@@ -1358,9 +1381,11 @@ function mainLoop() {
             ctx.stroke();
         }
 
-        ctx.fillStyle = miniMapHasGpsFix ? "#55ff55" : "#ffcf7a";
+        ctx.fillStyle = GPS_MINIMAP_ENABLED && miniMapHasGpsFix ? "#55ff55" : "#ffcf7a";
         ctx.font = "bold 9px '맑은 고딕'";
-        ctx.fillText(miniMapHasGpsFix ? "GPS 위치" : "GPS 신호 없음", 80, 164);
+        ctx.fillText(
+            GPS_MINIMAP_ENABLED ? (miniMapHasGpsFix ? "GPS 위치" : "GPS 신호 없음") : "GPS 미니맵 OFF",
+            80, 164);
 
         // 9. 알림 메시지 (호수 뷰포트 폭 기준으로 가로 중앙 정렬)
         const lakeCenterX = lakeWidth / 2;
