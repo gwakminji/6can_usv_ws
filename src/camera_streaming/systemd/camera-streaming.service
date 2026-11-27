@@ -16,6 +16,8 @@ ExecStart=@PROJECT_DIR@/start_camera_streaming.sh
 ExecStop=-/usr/bin/docker stop camera_streaming_container
 TimeoutStartSec=180
 TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
