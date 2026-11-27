@@ -233,6 +233,10 @@ B1/B2는 `install_*_autostart.sh`로 부팅 자동 실행을 등록해두면 이
 됩니다. 개별 보드 빌드/자동 실행 세부 설정, 컨테이너 구성은 `src/<패키지>/` 아래
 `start_*.sh`, `systemd/*.service`를 참고하세요.
 
+추진기 출력 범위(`MAX_DELTA`)와 PWM 반응 속도(`STEP_US`)를 원격에서 조정하거나,
+B2 추진기 노드의 재시작·PWM 로그를 확인하려면
+[B2 추진기 원격 설정 명령어](docs/thruster-remote-operations.md)를 사용하세요.
+
 ---
 
 ## 🗂️ 보드별 복구 브랜치
