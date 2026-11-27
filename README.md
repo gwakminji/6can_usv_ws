@@ -194,6 +194,8 @@ flowchart LR
 | `surface_camera_enabled` / `underwater_camera_enabled` | [gcs_params.yaml](src/usv_gcs/config/gcs_params.yaml) | `true` / `true` | 수면/수중 카메라 박스를 각각 켜고 끌 때 |
 | `surface_device` / `underwater_device` | `camera_streaming.launch.py` 인자 | `/dev/video2` / `/dev/video3` | USB 카메라 재연결로 장치 번호가 바뀌었을 때 (`v4l2-ctl --list-devices`로 확인) |
 
+카메라 노드는 V4L2로 장치를 열고, 연결·프레임 수신 실패 시 2초 간격으로 재시도합니다. 한쪽 카메라가 지연되어도 다른 카메라 처리가 멈추지 않도록 각각 별도 실행 흐름으로 처리합니다.
+
 GCS 설정 파일을 바꾼 경우, 파일만 고치고 끝이 아니라
 **`gui_main_node`를 재시작**해야 브라우저에 반영됩니다 (HTML/JS가 프로세스 시작 시
 메모리에 올라가는 구조라서 `--symlink-install`로도 핫리로드는 안 됩니다).
