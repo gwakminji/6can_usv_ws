@@ -78,11 +78,6 @@ PBL(Problem-Based Learning) 기반 사회공헌 프로젝트입니다. 무인수
 움직이고 GPS는 미니맵에만 사용됩니다. 카메라 영상은 B1이 MJPEG로 직접 송출해
 브라우저가 GCS를 거치지 않고 수신합니다.
 
-**현재 실행 설정 확인 필요:** 펌프·LED는 실제로 B1에 연결돼 있지만,
-`actuators.launch.py`는 `actuator_driver_node`를 B2에서 실행합니다. 이 노드는
-로컬 MCU RPC를 사용하므로 현재 배선에서 펌프·LED 제어가 가능한지는 확인이 필요합니다.
-이번 문서 정리에서는 보드 실행 코드와 자동 실행 스크립트를 변경하지 않았습니다.
-
 ### 📡 시스템 구조도
 
 ```mermaid
@@ -106,13 +101,12 @@ flowchart LR
     HVS[http_video_server]
   end
 
-  subgraph B1A["HW · B1 — 실제 펌프·LED 배선"]
-    PUMP[펌프·LED MCU]
+  subgraph B1A["HW · B1 — 센서·카메라·정화"]
+    PUMP[펌프·LED 제어]
   end
 
-  subgraph B2["HW · B2 — 실제 추진기 배선 및 현재 실행 설정"]
+  subgraph B2["HW · B2 — 추진기 전용"]
     THR[thruster_driver_node]
-    ACT[actuator_driver_node · 현재 B2에서 실행]
   end
 
   J2C -->|/cmd_vel| GUI
@@ -223,7 +217,7 @@ GCS 화면 기능은 [gcs_params.yaml](src/usv_gcs/config/gcs_params.yaml) 한 �
 # 1. B1 (센서 + 카메라; 펌프·LED는 B1에 배선됨)
 ./start_b1.sh
 
-# 2. B2 (추진기; 현재 액추에이터 제어 노드도 함께 시작됨)
+# 2. B2 (추진기 전용)
 cd src/usv_actuators && ./start_actuators.sh
 
 # 3. GCS (관제) — 조이스틱 연결 후
@@ -238,6 +232,25 @@ ros2 launch usv_gcs gcs.launch.py
 B1/B2는 `install_*_autostart.sh`로 부팅 자동 실행을 등록해두면 이후엔 전원만 넣으면
 됩니다. 개별 보드 빌드/자동 실행 세부 설정, 컨테이너 구성은 `src/<패키지>/` 아래
 `start_*.sh`, `systemd/*.service`를 참고하세요.
+
+---
+
+## 🗂️ 보드별 복구 브랜치
+
+실제 보드에서 문제가 생겼을 때 해당 보드 역할의 소스만 기준으로 복구할 수 있도록
+브랜치를 분리해 두었습니다. 각 브랜치는 **그 보드의 Arduino App·Docker·자동 실행
+스크립트 구성을 보존한 복구 스냅샷**이며, 다른 보드 코드와 합쳐서 사용하지 않습니다.
+
+| 브랜치 | 복구 대상 | 포함 역할 |
+|---|---|---|
+| `main` | 통합 기준 코드 | GCS, B1·B2 공통 ROS 2 워크스페이스 |
+| `backup/b1-sensors` | B1 센서 보드 | 수질·GPS 센서 Arduino App 및 센서 컨테이너 구성 |
+| `backup/b1-pump-led` | B1 정화 보드 | 펌프·LED Arduino App 및 정화 제어 구성 |
+| `backup/b1-camera` | B1 카메라 보드 | 수면·수중 카메라 스트리밍 및 자동 실행 구성 |
+
+원본 PR 브랜치(`draft/b1-sensors-board`, `draft/b1-actuators-board`,
+`draft/b1-camera-board`)도 삭제하지 않고 그대로 유지합니다. `backup/*`는 해당 원본을
+쉽게 찾고 복구하기 위한 역할별 이름입니다.
 
 ---
 
@@ -271,5 +284,3 @@ setInterval(() => console.log(navigator.getGamepads()[0]?.buttons.map((b,i)=>b.p
 - 인터페이스 계약(토픽 이름/타입), 보드별 상세 빌드 옵션, Docker/systemd 구성은 각
   패키지(`src/usv_sensors`, `src/usv_actuators`, `src/camera_streaming`, `src/usv_gcs`)의
   launch 파일과 스크립트 주석에 정리되어 있습니다.
-- 현재 `usv_actuators` 패키지는 추진기 노드와 펌프·LED 제어 노드를 모두 B2에서
-  시작합니다. 실제 배선은 B1에 펌프·LED, B2에 추진기만 연결된 구성입니다.
