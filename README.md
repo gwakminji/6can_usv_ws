@@ -184,9 +184,9 @@ flowchart LR
 | 파라미터 | 위치 | 기본값 | 언제 바꾸나 |
 |---|---|---|---|
 | `camera_host` | [gcs_params.yaml](src/usv_gcs/config/gcs_params.yaml) 또는 `gcs.launch.py` 인자 | `192.168.0.6` (설정 파일 예시) | B1 보드의 실제 IP로 변경 |
-| `linear_axis` / `angular_axis` / `angular_scale` | `gcs.launch.py` 인자 | `1` / `0` / `-1.0` | 실제 조이스틱 축 번호·방향이 다를 때 |
+| `linear_axis` / `angular_axis` / `linear_scale` / `angular_scale` | [gcs_params.yaml](src/usv_gcs/config/gcs_params.yaml) 또는 `gcs.launch.py` 인자 | `1` / `0` / `1.0` / `-0.6` | 전진·후진과 좌·우 회전의 축·감도를 조정할 때 |
 | `pump_button` / `auto_button` | `gcs.launch.py` 인자 | `0`(A) / `1`(B) | 조이스틱 버튼 배치가 다를 때 |
-| `linear_ramp_rate` / `angular_ramp_rate` | `src/usv_gcs/usv_gcs/joy_to_cmd_node.py`의 `declare_parameter` 기본값 (launch 인자 아님 — 일부러 여기 한 곳만 유지) | `0.2` / `0.4` | 조이스틱을 급히 꺾어도 속도가 얼마나 천천히 올라갈지 조정할 때 |
+| `linear_ramp_rate` / `angular_ramp_rate` / `deadzone` | [gcs_params.yaml](src/usv_gcs/config/gcs_params.yaml) 또는 `gcs.launch.py` 인자 | `0.2` / `0.4` / `0.05` | 속도 변화 속도와 조이스틱 미세 입력 무시 범위를 조정할 때 |
 | `GACHA_GAMEPAD_BUTTON_INDEX` | `dashboard_html.py` 상수 | `2`(Y, 추정치) | 실기기로 검증 후 정확한 값으로 |
 | `max_pwm` | `actuators.launch.py` 인자 | `255` | 실제 모터 드라이버 PWM 사양 확정 후 |
 | `bad_below` / `good_above` / `*_manual_hold_s` | `actuators.launch.py` 인자 | `40.0` / `60.0` / `60.0`초 | 실측 수질 범위·자동/수동 우선 시간 조정 시 |

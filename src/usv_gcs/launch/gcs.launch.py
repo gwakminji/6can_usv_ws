@@ -9,25 +9,47 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from ament_index_python.packages import get_package_share_directory
+import os
+import yaml
+
+
+def _gcs_config_defaults():
+    """gcs_params.yaml의 조이스틱 기본값을 launch 인자의 기본값으로 사용한다."""
+    config_path = os.path.join(
+        get_package_share_directory('usv_gcs'), 'config', 'gcs_params.yaml')
+    try:
+        with open(config_path, encoding='utf-8') as config_file:
+            return yaml.safe_load(config_file) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
 
 
 def generate_launch_description():
+    config = _gcs_config_defaults()
     # ===== 사용자 설정: 실행 시 name:=value로 변경 =====
     http_port_arg = DeclareLaunchArgument(
         'http_port', default_value='8000',
         description='gui_main_node 웹 대시보드 포트',
     )
     linear_axis_arg = DeclareLaunchArgument(
-        'linear_axis', default_value='1',
+        'linear_axis', default_value=str(config.get('linear_axis', 1)),
         description='조이스틱 전진/후진 축 번호',
     )
     angular_axis_arg = DeclareLaunchArgument(
-        'angular_axis', default_value='0',
+        'angular_axis', default_value=str(config.get('angular_axis', 0)),
         description='조이스틱 좌/우 회전 축 번호',
     )
-    linear_scale_arg = DeclareLaunchArgument('linear_scale', default_value='1.0')
-    angular_scale_arg = DeclareLaunchArgument('angular_scale', default_value='-1.0')
-    # 램프 속도와 데드존은 joy_to_cmd_node.py의 기본 파라미터에서 변경한다.
+    linear_scale_arg = DeclareLaunchArgument(
+        'linear_scale', default_value=str(config.get('linear_scale', 1.0)))
+    angular_scale_arg = DeclareLaunchArgument(
+        'angular_scale', default_value=str(config.get('angular_scale', -0.6)))
+    linear_ramp_rate_arg = DeclareLaunchArgument(
+        'linear_ramp_rate', default_value=str(config.get('linear_ramp_rate', 0.2)))
+    angular_ramp_rate_arg = DeclareLaunchArgument(
+        'angular_ramp_rate', default_value=str(config.get('angular_ramp_rate', 0.4)))
+    deadzone_arg = DeclareLaunchArgument(
+        'deadzone', default_value=str(config.get('deadzone', 0.05)))
     pump_button_arg = DeclareLaunchArgument(
         'pump_button', default_value='0',
         description='펌프/워터캐논 작동 버튼 번호',
@@ -47,6 +69,9 @@ def generate_launch_description():
         angular_axis_arg,
         linear_scale_arg,
         angular_scale_arg,
+        linear_ramp_rate_arg,
+        angular_ramp_rate_arg,
+        deadzone_arg,
         pump_button_arg,
         auto_button_arg,
         camera_host_arg,
@@ -58,6 +83,9 @@ def generate_launch_description():
                 'angular_axis': ParameterValue(LaunchConfiguration('angular_axis'), value_type=int),
                 'linear_scale': ParameterValue(LaunchConfiguration('linear_scale'), value_type=float),
                 'angular_scale': ParameterValue(LaunchConfiguration('angular_scale'), value_type=float),
+                'linear_ramp_rate': ParameterValue(LaunchConfiguration('linear_ramp_rate'), value_type=float),
+                'angular_ramp_rate': ParameterValue(LaunchConfiguration('angular_ramp_rate'), value_type=float),
+                'deadzone': ParameterValue(LaunchConfiguration('deadzone'), value_type=float),
                 'pump_button': ParameterValue(LaunchConfiguration('pump_button'), value_type=int),
                 'auto_button': ParameterValue(LaunchConfiguration('auto_button'), value_type=int),
             }],

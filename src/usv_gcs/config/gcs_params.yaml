@@ -23,4 +23,15 @@ use_fixed_gps: false
 initial_latitude: 37.3898
 initial_longitude: 126.6390
 
+# 조이스틱 이동 조정
+# linear: 전진/후진, angular: 좌/우 회전. angular_scale의 부호는 실제 조이스틱 방향에 맞춘다.
+linear_axis: 1
+angular_axis: 0
+linear_scale: 1.0
+angular_scale: -0.6
+# 값이 클수록 목표 속도까지 빨리 도달한다.
+linear_ramp_rate: 0.2
+angular_ramp_rate: 0.4
+deadzone: 0.05
+
 # Google Maps API 키는 gcs_secrets.yaml.example을 복사해 gcs_secrets.yaml에 설정한다.
